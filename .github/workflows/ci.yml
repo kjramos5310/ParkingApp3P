@@ -36,13 +36,18 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-          cache: 'npm'
 
-      - name: Install and Build NestJS Microservices (npm Workspaces)
+      - name: Build ms-vehiculos (NestJS)
         run: |
+          cd App/ms-vehiculos
           npm ci
-          npm run build:vehiculos
-          npm run build:tickets
+          npm run build
+
+      - name: Build ms-tickets (NestJS)
+        run: |
+          cd App/ms-tickets
+          npm ci
+          npm run build
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
