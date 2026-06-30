@@ -35,7 +35,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '22'
 
       - name: Build ms-vehiculos (NestJS)
         run: |
@@ -58,6 +58,7 @@ jobs:
       - name: Notify Telegram (Success)
         uses: appleboy/telegram-action@master
         if: success()
+        continue-on-error: true
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -74,6 +75,7 @@ jobs:
       - name: Notify Telegram (Failure)
         uses: appleboy/telegram-action@master
         if: failure()
+        continue-on-error: true
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
