@@ -35,7 +35,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install and Build NestJS Microservices (npm Workspaces)
@@ -51,34 +51,42 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Notify Telegram (Success)
-        uses: appleboy/telegram-action@master
         if: success()
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          message: |
-            ✅ *Build exitoso en GitHub Actions*
-            
-            *Repositorio:* ${{ github.repository }}
-            *Rama:* `${{ github.ref_name || github.head_ref }}`
-            *Commit:* ${{ github.event.head_commit.message || 'N/A' }}
-            *Autor:* `${{ github.actor }}`
-            
-            El análisis de calidad en SonarCloud ha culminado con éxito.
+        continue-on-error: true
+        run: |
+          cat << 'EOF' > msg.tmp
+          ✅ <b>Build exitoso en GitHub Actions</b>
+          
+          <b>Repositorio:</b> ${{ github.repository }}
+          <b>Rama:</b> <code>${{ github.ref_name || github.head_ref }}</code>
+          <b>Commit:</b> ${{ github.event.head_commit.message || 'N/A' }}
+          <b>Autor:</b> <code>${{ github.actor }}</code>
+          
+          El análisis de calidad en SonarCloud ha culminado con éxito.
+          EOF
+          sed 's/^ *//' msg.tmp > msg.txt
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "parse_mode=HTML" \
+            --data-urlencode "text=$(cat msg.txt)"
 
       - name: Notify Telegram (Failure)
-        uses: appleboy/telegram-action@master
         if: failure()
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          message: |
-            ❌ *FALLO en el Build de GitHub Actions*
-            
-            *Repositorio:* ${{ github.repository }}
-            *Rama:* `${{ github.ref_name || github.head_ref }}`
-            *Commit:* ${{ github.event.head_commit.message || 'N/A' }}
-            *Autor:* `${{ github.actor }}`
-            
-            Por favor, revisa los logs del pipeline para solucionar el error.
-            [Ver Ejecución](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        continue-on-error: true
+        run: |
+          cat << 'EOF' > msg.tmp
+          ❌ <b>FALLO en el Build de GitHub Actions</b>
+          
+          <b>Repositorio:</b> ${{ github.repository }}
+          <b>Rama:</b> <code>${{ github.ref_name || github.head_ref }}</code>
+          <b>Commit:</b> ${{ github.event.head_commit.message || 'N/A' }}
+          <b>Autor:</b> <code>${{ github.actor }}</code>
+          
+          Por favor, revisa los logs del pipeline para solucionar el error.
+          https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          sed 's/^ *//' msg.tmp > msg.txt
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "parse_mode=HTML" \
+            --data-urlencode "text=$(cat msg.txt)"
