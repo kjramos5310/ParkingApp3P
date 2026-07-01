@@ -51,36 +51,34 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Notify Telegram (Success)
-        uses: appleboy/telegram-action@master
         if: success()
         continue-on-error: true
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          message: |
-            ✅ *Build exitoso en GitHub Actions*
-            
-            *Repositorio:* ${{ github.repository }}
-            *Rama:* `${{ github.ref_name || github.head_ref }}`
-            *Commit:* ${{ github.event.head_commit.message || 'N/A' }}
-            *Autor:* `${{ github.actor }}`
-            
-            El análisis de calidad en SonarCloud ha culminado con éxito.
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "parse_mode=Markdown" \
+            --data-urlencode "text=✅ *Build exitoso en GitHub Actions*
+
+*Repositorio:* ${{ github.repository }}
+*Rama:* \`${{ github.ref_name || github.head_ref }}\`
+*Commit:* ${{ github.event.head_commit.message || 'N/A' }}
+*Autor:* \`${{ github.actor }}\`
+
+El análisis de calidad en SonarCloud ha culminado con éxito."
 
       - name: Notify Telegram (Failure)
-        uses: appleboy/telegram-action@master
         if: failure()
         continue-on-error: true
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          message: |
-            ❌ *FALLO en el Build de GitHub Actions*
-            
-            *Repositorio:* ${{ github.repository }}
-            *Rama:* `${{ github.ref_name || github.head_ref }}`
-            *Commit:* ${{ github.event.head_commit.message || 'N/A' }}
-            *Autor:* `${{ github.actor }}`
-            
-            Por favor, revisa los logs del pipeline para solucionar el error.
-            [Ver Ejecución](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "parse_mode=Markdown" \
+            --data-urlencode "text=❌ *FALLO en el Build de GitHub Actions*
+
+*Repositorio:* ${{ github.repository }}
+*Rama:* \`${{ github.ref_name || github.head_ref }}\`
+*Commit:* ${{ github.event.head_commit.message || 'N/A' }}
+*Autor:* \`${{ github.actor }}\`
+
+Por favor, revisa los logs del pipeline para solucionar el error.
+https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
