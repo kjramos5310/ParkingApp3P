@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Vehiculo } from './entities/vehiculo.entity';
 import { Repository } from 'typeorm';
 import { FactoryVehiculos } from './factory/factory-vehiculo';
+import { AuditEvent, EventPublisher } from '../common/event.publisher.service';
 
 @Injectable()
 export class VehiculosService {
@@ -12,7 +13,22 @@ export class VehiculosService {
   constructor(
     @InjectRepository(Vehiculo)
     private readonly vehiculoRepository: Repository<Vehiculo>,
+    private eventPublisher: EventPublisher
   ) { }
+
+  private async emitEvent(accion: string, vehiculo: Vehiculo, datosExtra?: any) {
+    const event: AuditEvent = {
+      servicio: 'ms-vehiculos',
+      accion: accion.toLowerCase(),
+      entidad: 'vehiculo',
+      datos: { ...vehiculo, ...datosExtra },
+      fecha_hora: new Date(),
+      ip: '127.0.0.1',
+      mac: '00:00:00:00:00:00',
+      id_vehiculo: vehiculo.id,
+    };
+    await this.eventPublisher.publishAuditEvent(event);
+  }
 
   async create(createVehiculoDto: CreateVehiculoDto): Promise<Vehiculo | null> {
     const existe = await this.vehiculoRepository.findOne(
@@ -25,7 +41,9 @@ export class VehiculosService {
     }
 
     const vehiculo = FactoryVehiculos.crear(createVehiculoDto);
-    return await this.vehiculoRepository.save(vehiculo);
+    const saved = await this.vehiculoRepository.save(vehiculo);
+    await this.emitEvent('CREATE', saved);
+    return saved;
   }
 
   // create(createVehiculoDto: CreateVehiculoDto) {
@@ -67,6 +85,8 @@ export class VehiculosService {
   remove(id: string) {
     return `This action removes a #${id} vehiculo`;
   }
+
+
 
   // completar y leccion el lunes 
 }
