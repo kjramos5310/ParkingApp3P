@@ -5,6 +5,7 @@ import ec.edu.espe.zonas.dto.response.ZonaResponseDto;
 import ec.edu.espe.zonas.entity.EstadoEspacio;
 import ec.edu.espe.zonas.entity.Zona;
 import ec.edu.espe.zonas.repository.ZonaRepositorio;
+import ec.edu.espe.zonas.services.interfaz.AuditService;
 import ec.edu.espe.zonas.services.interfaz.ZonaService;
 import ec.edu.espe.zonas.utils.MapperUtils;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,8 @@ public class ServiciosZona implements ZonaService {
     private final MapperUtils mapper;
 
     private final ZonaRepositorio zonaRepositorio;
+
+    private final AuditService auditService;
 
     // @Override
     // @Transactional(readOnly = true)
@@ -101,7 +104,14 @@ public class ServiciosZona implements ZonaService {
          */
         
         // Flujo en una sola línea sugerido por el docente (corregido y óptimo):
-        return mapper.zonaResponseDto(zonaRepositorio.save(mapper.toZonaEntity(requestDto)));
+        Zona zona = zonaRepositorio.save(mapper.toZonaEntity(requestDto));
+        auditService.recordEvent(
+                "CREATE",
+                "ZONA",
+                zona.getId(),
+                "Se creo la zona '" + zona.getNombre() + "' con codigo " + zona.getCodigo()
+        );
+        return mapper.zonaResponseDto(zona);
     }
 
 
@@ -130,6 +140,12 @@ public class ServiciosZona implements ZonaService {
         zona.setTipo(requestDto.getTipo());
 
         zona = zonaRepositorio.save(zona);
+        auditService.recordEvent(
+                "UPDATE",
+                "ZONA",
+                zona.getId(),
+                "Se actualizo la zona '" + zona.getNombre() + "' con codigo " + zona.getCodigo()
+        );
         return mapToZonaResponseDto(zona);
     }
 
@@ -139,7 +155,13 @@ public class ServiciosZona implements ZonaService {
         Zona zona = zonaRepositorio.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Zona no encontrada"));
         zona.setActive(false);
-        zonaRepositorio.save(zona);
+        Zona zonaEliminada = zonaRepositorio.save(zona);
+        auditService.recordEvent(
+                "DELETE",
+                "ZONA",
+                zonaEliminada.getId(),
+                "Se elimino logicamente la zona '" + zonaEliminada.getNombre() + "'"
+        );
     }
 
     // private String generateZoneCode(String nombre, String tipo) {

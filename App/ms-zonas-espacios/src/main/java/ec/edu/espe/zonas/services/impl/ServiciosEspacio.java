@@ -7,6 +7,7 @@ import ec.edu.espe.zonas.entity.Espacio;
 import ec.edu.espe.zonas.entity.Zona;
 import ec.edu.espe.zonas.repository.EspacioRepository;
 import ec.edu.espe.zonas.repository.ZonaRepositorio;
+import ec.edu.espe.zonas.services.interfaz.AuditService;
 import ec.edu.espe.zonas.services.interfaz.EspacioService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -25,6 +26,7 @@ public class ServiciosEspacio implements EspacioService {
 
     private final EspacioRepository espacioRepository;
     private final ZonaRepositorio zonaRepositorio;
+    private final AuditService auditService;
 
     @Override
     @Transactional(readOnly = true)
@@ -86,6 +88,12 @@ public class ServiciosEspacio implements EspacioService {
                 .build();
 
         espacio = espacioRepository.save(espacio);
+        auditService.recordEvent(
+                "CREATE",
+                "ESPACIO",
+                espacio.getId(),
+                "Se creo el espacio '" + espacio.getNombre() + "' en la zona '" + zona.getNombre() + "'"
+        );
         return mapToEspacioResponseDto(espacio);
     }
 
@@ -130,6 +138,12 @@ public class ServiciosEspacio implements EspacioService {
         espacio.setTipo(requestDTO.getTipo());
 
         espacio = espacioRepository.save(espacio);
+        auditService.recordEvent(
+                "UPDATE",
+                "ESPACIO",
+                espacio.getId(),
+                "Se actualizo el espacio '" + espacio.getNombre() + "' en la zona '" + zona.getNombre() + "'"
+        );
         return mapToEspacioResponseDto(espacio);
     }
 
@@ -139,7 +153,13 @@ public class ServiciosEspacio implements EspacioService {
         Espacio espacio = espacioRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Espacio no encontrado"));
         espacio.setActive(false);
-        espacioRepository.save(espacio);
+        Espacio espacioEliminado = espacioRepository.save(espacio);
+        auditService.recordEvent(
+                "DELETE",
+                "ESPACIO",
+                espacioEliminado.getId(),
+                "Se elimino logicamente el espacio '" + espacioEliminado.getNombre() + "'"
+        );
     }
 
     @Override
@@ -203,6 +223,12 @@ public class ServiciosEspacio implements EspacioService {
 
         espacio.setEstado(estado);
         espacio = espacioRepository.save(espacio);
+        auditService.recordEvent(
+                "UPDATE",
+                "ESPACIO",
+                espacio.getId(),
+                "Se cambio el estado del espacio '" + espacio.getNombre() + "' a " + espacio.getEstado()
+        );
         return mapToEspacioResponseDto(espacio);
     }
 
