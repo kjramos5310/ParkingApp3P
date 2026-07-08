@@ -43,6 +43,7 @@ public class DataInitializer implements CommandLineRunner {
             Person adminPerson = Person.builder()
                     .dni("9999999999")
                     .firstName("Admin")
+                    .middleName("Sistema")
                     .lastName("System")
                     .email("admin@parqueadero.espe.edu.ec")
                     .phone("0999999999")

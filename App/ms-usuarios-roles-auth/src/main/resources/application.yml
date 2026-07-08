@@ -13,5 +13,17 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
     open-in-view: false
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:admin}
+    password: ${RABBITMQ_PASSWORD:admin123}
 server:
   port: 8080
+
+# Configuracion de auditoria: debe coincidir con el consumidor de ms-audith
+app:
+  audit:
+    exchange: ${RABBITMQ_EXCHANGE:audit_exchange}
+    routing-key: ${RABBITMQ_ROUTING_KEY:audit_routing_key}
+    servicio: ms-usuarios
