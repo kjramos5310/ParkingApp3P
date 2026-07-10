@@ -2,7 +2,7 @@ spring:
   application:
     name: zonas-espacios
   datasource:
-    url: jdbc:mysql://localhost:3307/db_zonas_espacios?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3309/db_zonas_espacios?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: espe_user
     password: espe_password
     driver-class-name: com.mysql.cj.jdbc.Driver

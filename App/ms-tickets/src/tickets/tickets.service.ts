@@ -9,6 +9,7 @@ import { Vehiculo } from './interfaces/vehiculo.interfaces';
 import { Espacio } from './interfaces/espacio.interfaces';
 import { HttpClientService } from './common/httpl-client.service';
 import { ConfigService } from '@nestjs/config';
+import { TicketsEventsService } from '../events/events.service';
 
 @Injectable()
 export class TicketsService {
@@ -25,6 +26,7 @@ export class TicketsService {
     private readonly ticketRepository: Repository<Ticket>,
     private readonly httpClient: HttpClientService,
     private readonly configService: ConfigService,
+    private readonly eventsService: TicketsEventsService,
   ) {
     this.personaUrl = configService.get<string>('MS_PERSONAS') || 'http://localhost:8080/api/personas';
     this.espacioUrl = configService.get<string>('MS_ESPACIOS') || 'http://localhost:8080/api/espacios';
@@ -78,6 +80,18 @@ export class TicketsService {
     
     // Cambiar de estado al espacio a OCUPADO
     await this.actualizarEstadoEspacio(createTicketDto.idEspacio, 'OCUPADO');
+
+    // Notificar a los clientes SSE (dashboard) del cambio de estado
+    this.eventsService.emit({
+      type: 'espacio_actualizado',
+      data: {
+        idEspacio: createTicketDto.idEspacio,
+        estado: 'OCUPADO',
+        nombre: (espacio as any)?.nombre,
+        placa: createTicketDto.placa,
+        ticketId: TicketGuardado.id,
+      },
+    });
 
     this.logger.log(`Ticket creado con exito: ${JSON.stringify(TicketGuardado)} para la placa ${createTicketDto.placa}`);
     return TicketGuardado;
@@ -138,6 +152,17 @@ export class TicketsService {
 
     // Actualizar estado del espacio a DISPONIBLE
     await this.actualizarEstadoEspacio(ticket.idEspacio, 'DISPONIBLE');
+
+    // Notificar a los clientes SSE (dashboard) del cambio de estado
+    this.eventsService.emit({
+      type: 'espacio_actualizado',
+      data: {
+        idEspacio: ticket.idEspacio,
+        estado: 'DISPONIBLE',
+        placa: ticket.placa,
+        ticketId: ticket.id,
+      },
+    });
 
     const closedTicket = await this.ticketRepository.save(ticket);
     this.logger.log(`Ticket cerrado con exito: ${JSON.stringify(closedTicket)} para la placa ${closedTicket.placa}`);

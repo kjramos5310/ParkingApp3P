@@ -1,0 +1,94 @@
+/* Custom Scrollbar for Logs */
+.scrollbar-custom::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.scrollbar-custom::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.3);
+}
+
+.scrollbar-custom::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 4px;
+}
+
+.scrollbar-custom::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.4);
+}
+
+/* Animations for Incoming Events */
+@keyframes slideInEvent {
+    from {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.log-entry {
+    animation: slideInEvent 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Base Card Styling & Hover Transitions */
+.espacio-card {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: rgba(30, 41, 59, 0.4);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.espacio-card:hover {
+    transform: translateY(-4px);
+    background: rgba(30, 41, 59, 0.65);
+    box-shadow: 0 12px 20px -8px rgba(0, 0, 0, 0.5);
+}
+
+/* Dynamic State-based Card Glows */
+.espacio-card.disponible {
+    border-left: 4px solid #10b981;
+}
+.espacio-card.disponible:hover {
+    box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.15), 0 4px 6px -2px rgba(16, 185, 129, 0.05);
+    border-color: rgba(16, 185, 129, 0.8);
+}
+
+.espacio-card.ocupado {
+    border-left: 4px solid #ef4444;
+}
+.espacio-card.ocupado:hover {
+    box-shadow: 0 10px 15px -3px rgba(239, 68, 68, 0.15), 0 4px 6px -2px rgba(239, 68, 68, 0.05);
+    border-color: rgba(239, 68, 68, 0.8);
+}
+
+.espacio-card.reservado {
+    border-left: 4px solid #f59e0b;
+}
+.espacio-card.reservado:hover {
+    box-shadow: 0 10px 15px -3px rgba(245, 158, 11, 0.15), 0 4px 6px -2px rgba(245, 158, 11, 0.05);
+    border-color: rgba(245, 158, 11, 0.8);
+}
+
+/* Pulsing Emitters when Connected */
+.pulse-green {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+    animation: pulseG 2s infinite;
+}
+
+@keyframes pulseG {
+    0% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+    }
+    70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+    }
+    100% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+    }
+}

@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+@CrossOrigin("*")
 @RestController
 @RequestMapping("/api/espacios")
 @RequiredArgsConstructor
@@ -79,4 +80,10 @@ public class EspacioController {
     public ResponseEntity<EspacioResponseDto> liberarEspacio(@PathVariable UUID id) {
         return ResponseEntity.ok(espacioService.cambiarEstado(id, EstadoEspacio.DISPONIBLE));
     }
+
+    @GetMapping(value = "/sse", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter registrarSse() {
+        return espacioService.registrarSse();
+    }
 }
+

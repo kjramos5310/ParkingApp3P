@@ -5,9 +5,9 @@ import ec.edu.espe.zonas.dto.response.ZonaResponseDto;
 import ec.edu.espe.zonas.entity.EstadoEspacio;
 import ec.edu.espe.zonas.entity.Zona;
 import ec.edu.espe.zonas.repository.ZonaRepositorio;
-import ec.edu.espe.zonas.services.interfaz.AuditService;
 import ec.edu.espe.zonas.services.interfaz.ZonaService;
 import ec.edu.espe.zonas.utils.MapperUtils;
+import ec.edu.espe.zonas.services.interfaz.EspacioService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -25,8 +25,7 @@ public class ServiciosZona implements ZonaService {
     private final MapperUtils mapper;
 
     private final ZonaRepositorio zonaRepositorio;
-
-    private final AuditService auditService;
+    private final EspacioService espacioService;
 
     // @Override
     // @Transactional(readOnly = true)
@@ -95,23 +94,10 @@ public class ServiciosZona implements ZonaService {
             codigo = mapper.generateZoneCode(requestDto.getTipo().name(), zonaRepositorio);
         }
         requestDto.setCodigo(codigo.toUpperCase());
-
-        /* 
-         * Flujo de varias líneas (comentado para estudio):
-         * Zona objZona = mapper.toZonaEntity(requestDto);
-         * Zona zonaSaved = zonaRepositorio.save(objZona);
-         * return mapper.zonaResponseDto(zonaSaved);
-         */
-        
-        // Flujo en una sola línea sugerido por el docente (corregido y óptimo):
-        Zona zona = zonaRepositorio.save(mapper.toZonaEntity(requestDto));
-        auditService.recordEvent(
-                "CREATE",
-                "ZONA",
-                zona.getId(),
-                "Se creo la zona '" + zona.getNombre() + "' con codigo " + zona.getCodigo()
-        );
-        return mapper.zonaResponseDto(zona);
+        // zonaResponseDto(zonaRepositorio.save(mapper.toZonaEntity(requestDto)));
+        ZonaResponseDto responseDto = mapper.zonaResponseDto(zonaRepositorio.save(mapper.toZonaEntity(requestDto)));
+        espacioService.notificarCambioZona(responseDto, "zona_creada");
+        return responseDto;
     }
 
 
@@ -140,13 +126,9 @@ public class ServiciosZona implements ZonaService {
         zona.setTipo(requestDto.getTipo());
 
         zona = zonaRepositorio.save(zona);
-        auditService.recordEvent(
-                "UPDATE",
-                "ZONA",
-                zona.getId(),
-                "Se actualizo la zona '" + zona.getNombre() + "' con codigo " + zona.getCodigo()
-        );
-        return mapToZonaResponseDto(zona);
+        ZonaResponseDto responseDto = mapToZonaResponseDto(zona);
+        espacioService.notificarCambioZona(responseDto, "zona_actualizada");
+        return responseDto;
     }
 
     @Override
@@ -155,13 +137,14 @@ public class ServiciosZona implements ZonaService {
         Zona zona = zonaRepositorio.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Zona no encontrada"));
         zona.setActive(false);
-        Zona zonaEliminada = zonaRepositorio.save(zona);
-        auditService.recordEvent(
-                "DELETE",
-                "ZONA",
-                zonaEliminada.getId(),
-                "Se elimino logicamente la zona '" + zonaEliminada.getNombre() + "'"
-        );
+        zona = zonaRepositorio.save(zona);
+        
+        // Notificar desactivación de la zona
+        ZonaResponseDto responseDto = mapToZonaResponseDto(zona);
+        espacioService.notificarCambioZona(responseDto, "zona_desactivada");
+        
+        // Desactivar todos los espacios de esta zona y emitir eventos SSE
+        espacioService.desactivarEspaciosDeZona(id);
     }
 
     // private String generateZoneCode(String nombre, String tipo) {

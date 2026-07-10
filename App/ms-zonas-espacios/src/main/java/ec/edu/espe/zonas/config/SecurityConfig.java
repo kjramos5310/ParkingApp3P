@@ -24,6 +24,7 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/espacios", "/api/espacios/**", "/tickets/**").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/**").authenticated()
                 .anyRequest().hasRole("ADMIN")
             );

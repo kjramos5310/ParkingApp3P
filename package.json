@@ -5,7 +5,8 @@
   "private": true,
   "workspaces": [
     "App/ms-vehiculos",
-    "App/ms-tickets"
+    "App/ms-tickets",
+    "App/ms-audith"
   ],
   "scripts": {
     "build:vehiculos": "npm run build --workspace=App/ms-vehiculos",

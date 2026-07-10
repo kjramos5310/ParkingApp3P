@@ -7,7 +7,6 @@ import ec.edu.espe.zonas.entity.Espacio;
 import ec.edu.espe.zonas.entity.Zona;
 import ec.edu.espe.zonas.repository.EspacioRepository;
 import ec.edu.espe.zonas.repository.ZonaRepositorio;
-import ec.edu.espe.zonas.services.interfaz.AuditService;
 import ec.edu.espe.zonas.services.interfaz.EspacioService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @Service
 @RequiredArgsConstructor
@@ -26,7 +27,7 @@ public class ServiciosEspacio implements EspacioService {
 
     private final EspacioRepository espacioRepository;
     private final ZonaRepositorio zonaRepositorio;
-    private final AuditService auditService;
+    private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
 
     @Override
     @Transactional(readOnly = true)
@@ -88,12 +89,6 @@ public class ServiciosEspacio implements EspacioService {
                 .build();
 
         espacio = espacioRepository.save(espacio);
-        auditService.recordEvent(
-                "CREATE",
-                "ESPACIO",
-                espacio.getId(),
-                "Se creo el espacio '" + espacio.getNombre() + "' en la zona '" + zona.getNombre() + "'"
-        );
         return mapToEspacioResponseDto(espacio);
     }
 
@@ -138,12 +133,6 @@ public class ServiciosEspacio implements EspacioService {
         espacio.setTipo(requestDTO.getTipo());
 
         espacio = espacioRepository.save(espacio);
-        auditService.recordEvent(
-                "UPDATE",
-                "ESPACIO",
-                espacio.getId(),
-                "Se actualizo el espacio '" + espacio.getNombre() + "' en la zona '" + zona.getNombre() + "'"
-        );
         return mapToEspacioResponseDto(espacio);
     }
 
@@ -153,13 +142,7 @@ public class ServiciosEspacio implements EspacioService {
         Espacio espacio = espacioRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Espacio no encontrado"));
         espacio.setActive(false);
-        Espacio espacioEliminado = espacioRepository.save(espacio);
-        auditService.recordEvent(
-                "DELETE",
-                "ESPACIO",
-                espacioEliminado.getId(),
-                "Se elimino logicamente el espacio '" + espacioEliminado.getNombre() + "'"
-        );
+        espacioRepository.save(espacio);
     }
 
     @Override
@@ -223,13 +206,9 @@ public class ServiciosEspacio implements EspacioService {
 
         espacio.setEstado(estado);
         espacio = espacioRepository.save(espacio);
-        auditService.recordEvent(
-                "UPDATE",
-                "ESPACIO",
-                espacio.getId(),
-                "Se cambio el estado del espacio '" + espacio.getNombre() + "' a " + espacio.getEstado()
-        );
-        return mapToEspacioResponseDto(espacio);
+        EspacioResponseDto responseDto = mapToEspacioResponseDto(espacio);
+        notificarCambioEstado(responseDto);
+        return responseDto;
     }
 
     private EspacioResponseDto mapToEspacioResponseDto(Espacio espacio) {
@@ -244,5 +223,69 @@ public class ServiciosEspacio implements EspacioService {
                 .nombreZona(espacio.getZona() != null ? espacio.getZona().getNombre() : null)
                 .idZona(espacio.getZona() != null ? espacio.getZona().getId() : null)
                 .build();
+    }
+
+    @Override
+    public SseEmitter registrarSse() {
+        SseEmitter emitter = new SseEmitter(24 * 60 * 60 * 1000L); // 24 hours
+        this.emitters.add(emitter);
+
+        emitter.onCompletion(() -> this.emitters.remove(emitter));
+        emitter.onTimeout(() -> this.emitters.remove(emitter));
+        emitter.onError((e) -> this.emitters.remove(emitter));
+
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("INIT")
+                    .data("Conexion SSE establecida con ms-zonas-espacios"));
+        } catch (java.io.IOException e) {
+            this.emitters.remove(emitter);
+        }
+
+        return emitter;
+    }
+
+    private void notificarCambioEstado(EspacioResponseDto dto) {
+        List<SseEmitter> fallidos = new java.util.ArrayList<>();
+        for (SseEmitter emitter : this.emitters) {
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("espacio_cambiado")
+                        .data(dto));
+            } catch (Exception e) {
+                fallidos.add(emitter);
+            }
+        }
+        this.emitters.removeAll(fallidos);
+    }
+
+    @Override
+    @Transactional
+    public void desactivarEspaciosDeZona(UUID idZona) {
+        List<Espacio> espacios = espacioRepository.findByZonaId(idZona);
+        for (Espacio espacio : espacios) {
+            if (espacio.isActive()) {
+                espacio.setActive(false);
+                espacio = espacioRepository.save(espacio);
+                
+                EspacioResponseDto responseDto = mapToEspacioResponseDto(espacio);
+                notificarCambioEstado(responseDto);
+            }
+        }
+    }
+
+    @Override
+    public void notificarCambioZona(ec.edu.espe.zonas.dto.response.ZonaResponseDto dto, String eventName) {
+        List<SseEmitter> fallidos = new java.util.ArrayList<>();
+        for (SseEmitter emitter : this.emitters) {
+            try {
+                emitter.send(SseEmitter.event()
+                        .name(eventName)
+                        .data(dto));
+            } catch (Exception e) {
+                fallidos.add(emitter);
+            }
+        }
+        this.emitters.removeAll(fallidos);
     }
 }

@@ -1,128 +1,114 @@
-version: '3.8'
+# ============================================================================
+# ParkingApp3P - Infraestructura (bases de datos + mensajería)
+# ----------------------------------------------------------------------------
+# Este compose levanta SOLO la infraestructura que necesitan los
+# microservicios (una base de datos por servicio + RabbitMQ para auditoría).
+# Los microservicios (Spring Boot / NestJS) se ejecutan localmente contra
+# estos puertos (ver los .env de cada ms y los application.yml de Java).
+#
+#   Uso:  docker compose up -d
+#
+# Puertos de host elegidos para NO chocar con servicios nativos de Windows
+# (PostgreSQL 18 ya ocupa 5432 y MySQL ocupa 3306/3307 en esta máquina).
+# ============================================================================
 
 services:
-  # Base de Datos PostgreSQL (para usuarios, tickets, etc.)
-  postgres-db:
+  # --- ms-usuarios-roles-auth (Spring Boot) -> jdbc:postgresql://localhost:5434/usuarios_db
+  postgres-usuarios:
+    image: postgres:15
+    container_name: postgres-usuarios
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: usuarios_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - usuarios_data:/var/lib/postgresql/data
+    networks:
+      - parking-network
+
+  # --- ms-tickets (NestJS) -> localhost:5433 / tickets_db
+  postgres-tickets:
+    image: postgres:15
+    container_name: postgres-tickets
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tickets_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - tickets_data:/var/lib/postgresql/data
+    networks:
+      - parking-network
+
+  # --- ms-vehiculos (NestJS) -> localhost:5435 / vehiculos_db
+  vehiculos-postgres:
     image: postgres:15-alpine
-    container_name: parking-postgres
+    container_name: vehiculos_postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: parking_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin_password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vehiculos_db
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - vehiculos_data:/var/lib/postgresql/data
     networks:
       - parking-network
 
-  # Base de Datos MySQL/MariaDB (si se requiere para vehiculos/eventos)
-  mysql-db:
+  # --- ms-audith (NestJS) -> localhost:5436 / db_audit
+  db-audit:
+    image: postgres:latest
+    container_name: db_audit
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: db_audit
+    ports:
+      - "5436:5432"
+    volumes:
+      # postgres:latest es PostgreSQL 18: el volumen se monta en /var/lib/postgresql
+      # (no en /data) por el nuevo esquema de directorios por versión mayor.
+      - audit_data:/var/lib/postgresql
+    networks:
+      - parking-network
+
+  # --- ms-zonas-espacios (Spring Boot) -> jdbc:mysql://localhost:3309/db_zonas_espacios
+  mysql-zonas:
     image: mysql:8.0
-    container_name: parking-mysql
+    container_name: mysql-zonas-espacios
+    restart: unless-stopped
     environment:
-      MYSQL_DATABASE: parking_events
-      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: db_zonas_espacios
+      MYSQL_USER: espe_user
+      MYSQL_PASSWORD: espe_password
     ports:
-      - "3306:3306"
+      - "3309:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - zonas_data:/var/lib/mysql
     networks:
       - parking-network
 
-  # API Gateway (Kong)
-  kong:
-    image: kong:3.4
-    container_name: parking-kong
+  # --- RabbitMQ (usado por ms-vehiculos como publisher y ms-audith como consumer)
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    restart: unless-stopped
     environment:
-      KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yml
-      KONG_PROXY_ACCESS_LOG: /dev/stdout
-      KONG_ADMIN_ACCESS_LOG: /dev/stdout
-      KONG_PROXY_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl http2"
-      KONG_ADMIN_LISTEN: "0.0.0.0:8001, 0.0.0.0:8444 ssl http2"
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Consola de administración web
     volumes:
-      - ./App/kong.yml:/usr/local/kong/declarative/kong.yml
-    ports:
-      - "8000:8000"  # Puerto del Proxy (Tráfico de entrada externo)
-      - "8001:8001"  # Puerto de Administración (Solo local)
-    networks:
-      - parking-network
-    depends_on:
-      - postgres-db
-      - mysql-db
-
-  # Microservicio: ms-usuarios-roles-auth (Java Spring Boot)
-  ms-usuarios-roles-auth:
-    build:
-      context: ./App/ms-usuarios-roles-auth
-      dockerfile: Dockerfile
-    container_name: ms-usuarios
-    ports:
-      - "8081:8081"
-    environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/parking_db
-      - SPRING_DATASOURCE_USERNAME=admin
-      - SPRING_DATASOURCE_PASSWORD=admin_password
-    depends_on:
-      - postgres-db
-    networks:
-      - parking-network
-
-  # Microservicio: ms-zonas-espacios (Java Spring Boot)
-  ms-zonas-espacios:
-    build:
-      context: ./App/ms-zonas-espacios
-      dockerfile: Dockerfile
-    container_name: ms-zonas
-    ports:
-      - "8082:8082"
-    environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/parking_db
-      - SPRING_DATASOURCE_USERNAME=admin
-      - SPRING_DATASOURCE_PASSWORD=admin_password
-    depends_on:
-      - postgres-db
-    networks:
-      - parking-network
-
-  # Microservicio: ms-vehiculos (NestJS)
-  ms-vehiculos:
-    build:
-      context: ./App/ms-vehiculos
-      dockerfile: Dockerfile
-    container_name: ms-vehiculos
-    ports:
-      - "3001:3000"
-    environment:
-      - DATABASE_HOST=mysql-db
-      - DATABASE_PORT=3306
-      - DATABASE_USER=root
-      - DATABASE_PASSWORD=root_password
-      - DATABASE_NAME=parking_events
-    depends_on:
-      - mysql-db
-    networks:
-      - parking-network
-
-  # Microservicio: ms-tickets (NestJS)
-  ms-tickets:
-    build:
-      context: ./App/ms-tickets
-      dockerfile: Dockerfile
-    container_name: ms-tickets
-    ports:
-      - "3002:3000"
-    environment:
-      - DATABASE_HOST=postgres-db
-      - DATABASE_PORT=5432
-      - DATABASE_USER=admin
-      - DATABASE_PASSWORD=admin_password
-      - DATABASE_NAME=parking_db
-    depends_on:
-      - postgres-db
+      - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - parking-network
 
@@ -131,5 +117,9 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
-  mysql_data:
+  usuarios_data:
+  tickets_data:
+  vehiculos_data:
+  audit_data:
+  zonas_data:
+  rabbitmq_data:
