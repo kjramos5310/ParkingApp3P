@@ -3,82 +3,321 @@ name: CI/CD Pipeline
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+# Una ejecucion por rama: un push nuevo cancela el anterior en curso.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
 
 jobs:
+  # ===========================================================================
+  # 1. Compilacion y pruebas unitarias
+  # ===========================================================================
   build-and-test:
+    name: Compilar y probar
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # SonarCloud requiere historial completo para un análisis correcto
+          fetch-depth: 0 # SonarCloud necesita el historial completo
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v3
+      - name: Configurar JDK 21
+        uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Compile Java Microservices (Maven)
-        run: |
-          mvn -B clean compile
+      - name: Compilar y probar microservicios Java
+        run: mvn -B clean verify
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install and Build NestJS Microservices (npm Workspaces)
+      - name: Instalar dependencias (workspaces NestJS)
+        run: npm ci
+
+      - name: Compilar ms-vehiculos y ms-tickets
         run: |
-          npm ci
           npm run build:vehiculos
           npm run build:tickets
 
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+      - name: Probar ms-vehiculos y ms-tickets
+        run: |
+          npm run test:vehiculos
+          npm run test:tickets
+
+      - name: Compilar y probar ms-audith
+        working-directory: App/ms-audith
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Compilar el frontend
+        working-directory: Frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Conservar los artefactos de compilacion
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            App/*/target/*.jar
+            Frontend/dist
+          retention-days: 5
+
+  # ===========================================================================
+  # 2. Analisis estatico
+  # ===========================================================================
+  sonarcloud:
+    name: Analisis SonarCloud
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # Los forks no tienen acceso a los secrets del repositorio.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      quality_gate: ${{ steps.gate.outputs.estado }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # Sonar analiza el bytecode: hay que compilarlo antes.
+      - name: Compilar clases Java
+        run: mvn -B clean compile
+
+      - name: Analisis SonarCloud
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      - name: Notify Telegram (Success)
-        if: success()
+      - name: Leer el Quality Gate
+        id: gate
         continue-on-error: true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          cat << 'EOF' > msg.tmp
-          ✅ <b>Build exitoso en GitHub Actions</b>
-          
-          <b>Repositorio:</b> ${{ github.repository }}
-          <b>Rama:</b> <code>${{ github.ref_name || github.head_ref }}</code>
-          <b>Commit:</b> ${{ github.event.head_commit.message || 'N/A' }}
-          <b>Autor:</b> <code>${{ github.actor }}</code>
-          
-          El análisis de calidad en SonarCloud ha culminado con éxito.
-          EOF
-          sed 's/^ *//' msg.tmp > msg.txt
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d "parse_mode=HTML" \
-            --data-urlencode "text=$(cat msg.txt)"
+          # La API tarda unos segundos en publicar el resultado del analisis.
+          sleep 20
+          RESPUESTA=$(curl -s -u "$SONAR_TOKEN:" \
+            "https://sonarcloud.io/api/qualitygates/project_status?projectKey=kjramos5310_ParkingApp3P")
+          ESTADO=$(echo "$RESPUESTA" | jq -r '.projectStatus.status // "DESCONOCIDO"')
+          echo "estado=$ESTADO" >> "$GITHUB_OUTPUT"
+          echo "Quality Gate: $ESTADO"
 
-      - name: Notify Telegram (Failure)
-        if: failure()
-        continue-on-error: true
+  # ===========================================================================
+  # 3. Validacion de los manifiestos de Kubernetes
+  # ===========================================================================
+  validar-k8s:
+    name: Validar manifiestos K8s
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verificar que el ConfigMap de Kong este sincronizado
         run: |
-          cat << 'EOF' > msg.tmp
-          ❌ <b>FALLO en el Build de GitHub Actions</b>
-          
+          python k8s/sync-kong-config.py
+          if ! git diff --quiet k8s/07-kong-config.yaml; then
+            echo "::error::k8s/07-kong-config.yaml no coincide con App/kong.yml."
+            echo "Ejecuta 'python k8s/sync-kong-config.py' y confirma el cambio."
+            git diff k8s/07-kong-config.yaml
+            exit 1
+          fi
+
+      - name: Instalar kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validar los manifiestos contra el esquema de Kubernetes
+        run: kubeconform -strict -summary -kubernetes-version 1.29.0 k8s/
+
+  # ===========================================================================
+  # 4. Construccion y publicacion de imagenes Docker
+  # ===========================================================================
+  docker:
+    name: Publicar imagenes
+    runs-on: ubuntu-latest
+    needs: [build-and-test, validar-k8s]
+    # Solo se publican imagenes de las ramas principales, no de cada PR.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nombre: ms-usuarios
+            contexto: App/ms-usuarios-roles-auth
+          - nombre: ms-zonas
+            contexto: App/ms-zonas-espacios
+          - nombre: ms-vehiculos
+            contexto: App/ms-vehiculos
+          - nombre: ms-tickets
+            contexto: App/ms-tickets
+          - nombre: ms-audith
+            contexto: App/ms-audith
+          - nombre: frontend
+            contexto: Frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Autenticarse en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Etiquetas de la imagen
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.nombre }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Construir y publicar
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.contexto }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.nombre }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.nombre }}
+
+  # ===========================================================================
+  # 5. Despliegue a Kubernetes
+  # ===========================================================================
+  # Semiautomatizado: se ejecuta solo sobre main y requiere que el entorno
+  # "produccion" este configurado con el KUBECONFIG del cluster. Si el secret
+  # no existe, el job se omite en lugar de fallar el pipeline.
+  desplegar:
+    name: Desplegar en Kubernetes
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    environment: produccion
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Comprobar que exista el KUBECONFIG
+        id: check
+        run: |
+          if [ -z "${{ secrets.KUBECONFIG }}" ]; then
+            echo "::warning::No hay secret KUBECONFIG configurado; se omite el despliegue."
+            echo "listo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "listo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configurar kubectl
+        if: steps.check.outputs.listo == 'true'
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Aplicar manifiestos
+        if: steps.check.outputs.listo == 'true'
+        run: |
+          python k8s/sync-kong-config.py
+          kubectl apply -f k8s/
+          # Apunta los Deployments a la imagen recien publicada
+          for servicio in ms-usuarios ms-zonas ms-vehiculos ms-tickets ms-audith frontend; do
+            kubectl -n parqueadero set image "deployment/$servicio" \
+              "$servicio=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/$servicio:sha-$(git rev-parse --short HEAD)"
+          done
+          kubectl -n parqueadero rollout status deployment --timeout=600s
+
+  # ===========================================================================
+  # 6. Notificacion a Telegram
+  # ===========================================================================
+  notificar:
+    name: Notificar a Telegram
+    runs-on: ubuntu-latest
+    needs: [build-and-test, sonarcloud, validar-k8s, docker, desplegar]
+    if: always()
+    steps:
+      - name: Enviar resumen
+        continue-on-error: true
+        env:
+          BUILD: ${{ needs.build-and-test.result }}
+          SONAR: ${{ needs.sonarcloud.result }}
+          GATE: ${{ needs.sonarcloud.outputs.quality_gate }}
+          K8S: ${{ needs.validar-k8s.result }}
+          DOCKER: ${{ needs.docker.result }}
+          DEPLOY: ${{ needs.desplegar.result }}
+        run: |
+          icono() {
+            case "$1" in
+              success) echo "✅" ;;
+              failure) echo "❌" ;;
+              cancelled) echo "🚫" ;;
+              skipped) echo "➖" ;;
+              *) echo "❔" ;;
+            esac
+          }
+
+          # El pipeline falla si cualquier job obligatorio fallo.
+          if [ "$BUILD" = "failure" ] || [ "$K8S" = "failure" ] || \
+             [ "$DOCKER" = "failure" ] || [ "$DEPLOY" = "failure" ]; then
+            TITULO="❌ <b>Pipeline con fallos</b>"
+          else
+            TITULO="✅ <b>Pipeline correcto</b>"
+          fi
+
+          GATE_TEXTO="${GATE:-no disponible}"
+
+          TEXTO="$TITULO
+
           <b>Repositorio:</b> ${{ github.repository }}
-          <b>Rama:</b> <code>${{ github.ref_name || github.head_ref }}</code>
-          <b>Commit:</b> ${{ github.event.head_commit.message || 'N/A' }}
+          <b>Rama:</b> <code>${{ github.ref_name }}</code>
           <b>Autor:</b> <code>${{ github.actor }}</code>
-          
-          Por favor, revisa los logs del pipeline para solucionar el error.
-          https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          EOF
-          sed 's/^ *//' msg.tmp > msg.txt
+
+          $(icono "$BUILD") Compilacion y pruebas
+          $(icono "$SONAR") SonarCloud — Quality Gate: <b>${GATE_TEXTO}</b>
+          $(icono "$K8S") Manifiestos de Kubernetes
+          $(icono "$DOCKER") Imagenes Docker
+          $(icono "$DEPLOY") Despliegue
+
+          <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">Ver la ejecucion</a>"
+
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             -d "parse_mode=HTML" \
-            --data-urlencode "text=$(cat msg.txt)"
+            -d "disable_web_page_preview=true" \
+            --data-urlencode "text=$(echo "$TEXTO" | sed 's/^[[:space:]]*//')"

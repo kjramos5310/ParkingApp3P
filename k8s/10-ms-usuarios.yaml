@@ -1,0 +1,97 @@
+# MS-Usuarios (Spring Boot): usuarios, personas, roles y emision de JWT.
+# Publica eventos de dominio a RabbitMQ y persiste en PostgreSQL (usuarios_db).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms-usuarios
+  namespace: parqueadero
+  labels:
+    app: ms-usuarios
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ms-usuarios
+  template:
+    metadata:
+      labels:
+        app: ms-usuarios
+        tier: backend
+    spec:
+      containers:
+        - name: ms-usuarios
+          image: parkingapp/ms-usuarios:latest
+          imagePullPolicy: Never # imagen construida localmente (minikube/kind)
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres:5432/usuarios_db
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_USER
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: JWT_SECRET
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_PASSWORD
+            - name: COOKIE_SECURE
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: parking-config
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10 # tolera hasta 5 min de arranque de la JVM
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "384Mi"
+              cpu: "150m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms-usuarios
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: ms-usuarios
+  ports:
+    - port: 8080
+      targetPort: 8080

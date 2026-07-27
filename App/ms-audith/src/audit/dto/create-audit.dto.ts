@@ -15,6 +15,11 @@ import {
 export class CreateAuditDto {
     @IsString()
     @IsNotEmpty()
+    @Matches(/^[a-z0-9][a-z0-9-]{1,49}$/)
+    tenant_id!: string;
+
+    @IsString()
+    @IsNotEmpty()
     accion!: string;
 
     @IsString()

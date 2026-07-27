@@ -6,6 +6,9 @@ export class Eventoauditoria {
     @PrimaryGeneratedColumn()
     id: number;
 
+    @Column({ name: 'tenant_id', type: 'varchar', length: 50, nullable: false, default: 'empresa-a' })
+    tenant_id!: string;
+
     @Column({ type: 'varchar', length: 50, nullable: false })
     accion!: string; //crear, actualizar, eliminar, consultar
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Headers } from '@nestjs/common';
 import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
@@ -8,28 +8,28 @@ export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
   @Post()
-  create(@Body() createTicketDto: CreateTicketDto) {
-    return this.ticketsService.create(createTicketDto);
+  create(@Headers('x-tenant-id') tenantId: string, @Body() createTicketDto: CreateTicketDto) {
+    return this.ticketsService.create(tenantId, createTicketDto);
   }
 
   @Get()
-  findAll() {
-    return this.ticketsService.findAll();
+  findAll(@Headers('x-tenant-id') tenantId: string) {
+    return this.ticketsService.findAll(tenantId);
   }
 
   @Get('activos')
-  findActivos() {
-    return this.ticketsService.findActivos();
+  findActivos(@Headers('x-tenant-id') tenantId: string) {
+    return this.ticketsService.findActivos(tenantId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.ticketsService.findOne(id);
+  findOne(@Headers('x-tenant-id') tenantId: string, @Param('id') id: string) {
+    return this.ticketsService.findOne(tenantId, id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateTicketDto: UpdateTicketDto) {
-    return this.ticketsService.update(id, updateTicketDto);
+  update(@Headers('x-tenant-id') tenantId: string, @Param('id') id: string, @Body() updateTicketDto: UpdateTicketDto) {
+    return this.ticketsService.update(tenantId, id, updateTicketDto);
   }
 
   @Delete(':id')

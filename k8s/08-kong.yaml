@@ -1,0 +1,124 @@
+# Kong API Gateway en modo DB-less.
+# Toda la comunicacion externa hacia los microservicios pasa por aqui:
+# enrutamiento, rate limiting, validacion JWT y balanceo de carga.
+# La configuracion declarativa se monta desde el ConfigMap kong-declarative-config
+# (generado a partir de App/kong.yml por k8s/sync-kong-config.py).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+  namespace: parqueadero
+  labels:
+    app: kong
+    tier: gateway
+spec:
+  replicas: 2 # el gateway es stateless: se escala horizontalmente sin coordinacion
+  selector:
+    matchLabels:
+      app: kong
+  template:
+    metadata:
+      labels:
+        app: kong
+        tier: gateway
+      annotations:
+        # Fuerza el rollout de los pods cuando cambia la configuracion declarativa.
+        # Actualizar con: kubectl -n parqueadero rollout restart deployment/kong
+        checksum/config: "regenerar-con-rollout-restart"
+    spec:
+      # El campo secret de jwt_secrets no admite referencias a vault, asi que el
+      # ConfigMap guarda el marcador __JWT_SECRET__ y aqui se reemplaza por el
+      # valor real del Secret. Resultado: el secreto nunca queda escrito en el
+      # ConfigMap, que es un objeto sin cifrar.
+      initContainers:
+        - name: render-config
+          image: kong:3.7
+          command:
+            - /bin/sh
+            - -c
+            - |
+              sed "s|__JWT_SECRET__|${JWT_SECRET}|g"                 /kong/declarative/kong.yml > /kong/rendered/kong.yml
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: JWT_SECRET
+          volumeMounts:
+            - name: kong-config
+              mountPath: /kong/declarative
+              readOnly: true
+            - name: kong-rendered
+              mountPath: /kong/rendered
+      containers:
+        - name: kong
+          image: kong:3.7
+          ports:
+            - containerPort: 8000
+              name: proxy
+            - containerPort: 8100
+              name: status
+          env:
+            - name: KONG_DATABASE
+              value: "off"
+            - name: KONG_DECLARATIVE_CONFIG
+              value: /kong/rendered/kong.yml
+            - name: KONG_PROXY_LISTEN
+              value: "0.0.0.0:8000"
+            # El puerto Admin se restringe a loopback: no debe exponerse en el
+            # cluster, la configuracion es inmutable y viene del ConfigMap.
+            - name: KONG_ADMIN_LISTEN
+              value: "127.0.0.1:8001"
+            - name: KONG_STATUS_LISTEN
+              value: "0.0.0.0:8100"
+            - name: KONG_PROXY_ACCESS_LOG
+              value: /dev/stdout
+            - name: KONG_PROXY_ERROR_LOG
+              value: /dev/stderr
+          volumeMounts:
+            - name: kong-rendered
+              mountPath: /kong/rendered
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 8100
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: 8100
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+      volumes:
+        - name: kong-config
+          configMap:
+            name: kong-declarative-config
+        # Config renderizada: compartida entre el initContainer y Kong
+        - name: kong-rendered
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong-proxy
+  namespace: parqueadero
+  labels:
+    app: kong
+spec:
+  type: ClusterIP # la exposicion externa la maneja el Ingress
+  selector:
+    app: kong
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: proxy

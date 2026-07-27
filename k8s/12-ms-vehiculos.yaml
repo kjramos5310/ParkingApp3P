@@ -1,0 +1,98 @@
+# MS-Vehiculos (NestJS): catalogo de vehiculos por tenant.
+# Publica eventos de auditoria a RabbitMQ y persiste en PostgreSQL (vehiculos_db).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms-vehiculos
+  namespace: parqueadero
+  labels:
+    app: ms-vehiculos
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ms-vehiculos
+  template:
+    metadata:
+      labels:
+        app: ms-vehiculos
+        tier: backend
+    spec:
+      containers:
+        - name: ms-vehiculos
+          image: parkingapp/ms-vehiculos:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NOMBRE
+              value: vehiculos_db
+            - name: DB_USUARIO
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_USER
+            - name: DB_CONTRASENA
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: JWT_SECRET
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_PASSWORD
+          envFrom:
+            - configMapRef:
+                name: parking-config
+          startupProbe:
+            tcpSocket:
+              port: 3000
+            failureThreshold: 20
+            periodSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms-vehiculos
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: ms-vehiculos
+  ports:
+    - port: 3000
+      targetPort: 3000

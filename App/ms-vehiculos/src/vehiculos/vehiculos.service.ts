@@ -19,6 +19,7 @@ export class VehiculosService {
   private async emitEvent(accion: string, vehiculo: Vehiculo, datosExtra?: any) {
     const event: AuditEvent = {
       servicio: 'ms-vehiculos',
+      tenant_id: vehiculo.tenantId,
       accion: accion.toLowerCase(),
       entidad: 'vehiculo',
       datos: { ...vehiculo, ...datosExtra },
@@ -30,10 +31,10 @@ export class VehiculosService {
     await this.eventPublisher.publishAuditEvent(event);
   }
 
-  async create(createVehiculoDto: CreateVehiculoDto): Promise<Vehiculo | null> {
+  async create(tenantId: string, createVehiculoDto: CreateVehiculoDto): Promise<Vehiculo | null> {
     const existe = await this.vehiculoRepository.findOne(
       {
-        where: { placa: createVehiculoDto.datos.placa }
+        where: { tenantId, placa: createVehiculoDto.datos.placa }
       }
     )
     if (existe) {
@@ -41,6 +42,7 @@ export class VehiculosService {
     }
 
     const vehiculo = FactoryVehiculos.crear(createVehiculoDto);
+    vehiculo.tenantId = tenantId;
     const saved = await this.vehiculoRepository.save(vehiculo);
     await this.emitEvent('CREATE', saved);
     return saved;
@@ -52,14 +54,14 @@ export class VehiculosService {
 
   // promesas
 
-  async findAll(): Promise<Vehiculo[]> {
-    return await this.vehiculoRepository.find();
+  async findAll(tenantId: string): Promise<Vehiculo[]> {
+    return await this.vehiculoRepository.find({ where: { tenantId } });
   }
 
-  async findOne(id: string): Promise<Vehiculo | null> {
+  async findOne(tenantId: string, id: string): Promise<Vehiculo | null> {
     const vehiculo = await this.vehiculoRepository.findOne(
       {
-        where: { id: id }
+        where: { tenantId, id: id }
       }
     )
     if (!vehiculo) {
@@ -68,9 +70,9 @@ export class VehiculosService {
     return vehiculo;
   }
 
-  async findByPlaca(placa: string): Promise<Vehiculo | null> {
+  async findByPlaca(tenantId: string, placa: string): Promise<Vehiculo | null> {
     const vehiculo = await this.vehiculoRepository.findOne({
-      where: { placa: placa }
+      where: { tenantId, placa: placa }
     });
     if (!vehiculo) {
       throw new Error('No se encontro ningun vehiculo con la placa ' + placa);

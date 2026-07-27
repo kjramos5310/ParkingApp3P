@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Headers } from '@nestjs/common';
 import { VehiculosService } from './vehiculos.service';
 import { CreateVehiculoDto } from './dto/create-vehiculo.dto';
 import { UpdateVehiculoDto } from './dto/update-vehiculo.dto';
@@ -8,23 +8,23 @@ export class VehiculosController {
   constructor(private readonly vehiculosService: VehiculosService) {}
 
   @Post()
-  create(@Body() createVehiculoDto: CreateVehiculoDto) {
-    return this.vehiculosService.create(createVehiculoDto);
+  create(@Headers('x-tenant-id') tenantId: string, @Body() createVehiculoDto: CreateVehiculoDto) {
+    return this.vehiculosService.create(tenantId, createVehiculoDto);
   }
 
   @Get()
-  findAll() {
-    return this.vehiculosService.findAll();
+  findAll(@Headers('x-tenant-id') tenantId: string) {
+    return this.vehiculosService.findAll(tenantId);
   }
 
   @Get('placa/:placa')
-  findByPlaca(@Param('placa') placa: string) {
-    return this.vehiculosService.findByPlaca(placa);
+  findByPlaca(@Headers('x-tenant-id') tenantId: string, @Param('placa') placa: string) {
+    return this.vehiculosService.findByPlaca(tenantId, placa);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.vehiculosService.findOne(id);
+  findOne(@Headers('x-tenant-id') tenantId: string, @Param('id') id: string) {
+    return this.vehiculosService.findOne(tenantId, id);
   }
 
   @Patch(':id')

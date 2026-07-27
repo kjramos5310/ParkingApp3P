@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -7,7 +7,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { TicketsModule } from './tickets/tickets.module';
 import { Ticket } from './tickets/entities/ticket.entity';
 import { EventsModule } from './events/events.module';
-import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { EventPublisher } from './common/event.publisher.service';
+import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 
 @Module({
   imports: [
@@ -33,9 +34,12 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
   controllers: [AppController],
   providers: [
     AppService,
+    EventPublisher,
+    // Interceptor global: audita toda operacion HTTP del microservicio y
+    // publica el evento a RabbitMQ para que ms-audith lo persista.
     {
-      provide: APP_GUARD,
-      useClass: JwtAuthGuard,
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
     },
   ],
 })

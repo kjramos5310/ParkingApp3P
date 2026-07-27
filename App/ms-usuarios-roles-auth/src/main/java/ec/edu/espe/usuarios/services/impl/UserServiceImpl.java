@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import ec.edu.espe.usuarios.tenant.TenantContext;
 
 @Service
 @RequiredArgsConstructor
@@ -43,14 +44,16 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserResponse createUser(UserCreateRequest userRequest) {
-        if (personRepository.existsByDni(userRequest.getDni())) {
+        String tenantId = TenantContext.get();
+        if (personRepository.existsByTenantIdAndDni(tenantId, userRequest.getDni())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "DNI already exists");
         }
-        if (personRepository.existsByEmail(userRequest.getEmail())) {
+        if (personRepository.existsByTenantIdAndEmail(tenantId, userRequest.getEmail())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
 
         Person person = Person.builder()
+                .tenantId(tenantId)
                 .dni(userRequest.getDni())
                 .firstName(userRequest.getFirstName())
                 .middleName(userRequest.getMiddleName())
@@ -69,6 +72,7 @@ public class UserServiceImpl implements UserService {
         String encodedPassword = passwordEncoder.encode(rawPassword);
 
         User user = User.builder()
+                .tenantId(tenantId)
                 .person(person)
                 .username(generarUsername(userRequest.getFirstName(), 
                 userRequest.getMiddleName(), 
@@ -111,7 +115,7 @@ public class UserServiceImpl implements UserService {
         String finalUsername = baseUsername;
         
         int count = 1;
-        while (userRepository.findByUsername(finalUsername).isPresent()) {
+        while (userRepository.findByTenantIdAndUsername(TenantContext.get(), finalUsername).isPresent()) {
             finalUsername = baseUsername + count;
             count++;
         }
@@ -122,7 +126,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(readOnly = true)
     public List<UserResponse> getUsers() {
-        return userRepository.findAll().stream()
+        return userRepository.findAllByTenantId(TenantContext.get()).stream()
                 .map(this::mapToUserResponse)
                 .toList();
     }
@@ -130,7 +134,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(readOnly = true)
     public UserResponse getUserById(UUID id) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         return mapToUserResponse(user);
     }
@@ -138,14 +142,14 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserResponse updateUser(UUID id, UserUpdateRequest userRequest) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         
         Person person = user.getPerson();
 
         // Validar si el email cambió y si el nuevo ya existe
         if (!person.getEmail().equalsIgnoreCase(userRequest.getEmail())) {
-            if (personRepository.existsByEmail(userRequest.getEmail())) {
+            if (personRepository.existsByTenantIdAndEmail(TenantContext.get(), userRequest.getEmail())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
             }
         }
@@ -178,7 +182,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public void deleteUser(UUID id) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         user.setActive(false);
         userRepository.save(user);
@@ -187,7 +191,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserResponse assigneRole(UUID userId, UUID roleId) {
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Role role = roleRepository.findById(roleId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Rol no encontrado"));
@@ -256,7 +260,7 @@ public class UserServiceImpl implements UserService {
             SecurityContextHolder.getContext().setAuthentication(authentication);
             String jwt = jwtTokenProvider.generateToken(authentication);
 
-            User user = userRepository.findByUsername(loginRequest.getUsername())
+            User user = userRepository.findByTenantIdAndUsername(TenantContext.get(), loginRequest.getUsername())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
             
             user.setLastLogin(java.time.LocalDateTime.now());

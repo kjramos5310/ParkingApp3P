@@ -1,32 +1,32 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
 import * as jwt from 'jsonwebtoken';
-import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   private readonly jwtSecret = process.env.JWT_SECRET || '9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6';
 
-  constructor(private readonly reflector: Reflector) {}
-
   canActivate(context: ExecutionContext): boolean {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-    if (isPublic) {
-      return true;
-    }
-
     const request = context.switchToHttp().getRequest();
+    const tenantId = String(request.headers['x-tenant-id'] || request.query?.tenant_id || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(tenantId)) {
+      throw new UnauthorizedException('X-Tenant-ID es obligatorio y tiene un formato invalido');
+    }
+    request.tenantId = tenantId;
+
     const authHeader = request.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const cookieName = `PARKING_TOKEN_${tenantId}=`;
+    const cookieToken = String(request.headers.cookie || '').split(';')
+      .map((part: string) => part.trim()).find((part: string) => part.startsWith(cookieName))?.slice(cookieName.length);
+    if ((!authHeader || !authHeader.startsWith('Bearer ')) && !cookieToken) {
       throw new UnauthorizedException('Token no proporcionado o formato inválido');
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = cookieToken || authHeader.split(' ')[1];
     try {
       const payload = jwt.verify(token, this.jwtSecret) as any;
+      if (payload.tenant_id !== tenantId) {
+        throw new UnauthorizedException('El token pertenece a otra empresa');
+      }
       request.user = payload;
 
       const method = request.method;

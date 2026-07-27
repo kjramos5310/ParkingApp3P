@@ -22,12 +22,12 @@ export class AuditService {
     return this.auditRepo.save(newEvent);
   }
 
-  async findAll(): Promise<Eventoauditoria[]> {
-    return this.auditRepo.find({ order: { timestamp: 'DESC' } });
+  async findAll(tenantId: string): Promise<Eventoauditoria[]> {
+    return this.auditRepo.find({ where: { tenant_id: tenantId }, order: { timestamp: 'DESC' } });
   }
 
-  async findOne(id: string): Promise<Eventoauditoria | null> {
-    return await this.auditRepo.findOne({ where: { id: +id } });
+  async findOne(tenantId: string, id: string): Promise<Eventoauditoria | null> {
+    return await this.auditRepo.findOne({ where: { tenant_id: tenantId, id: +id } });
   }
 
   // async update(id: string, updateAuditDto: UpdateAuditDto) {

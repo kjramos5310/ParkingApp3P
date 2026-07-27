@@ -9,7 +9,8 @@ import java.util.Set;
 import java.util.UUID;
 
 @Entity
-@Table(name = "users")
+@Table(name = "users", uniqueConstraints =
+        @UniqueConstraint(name = "uk_users_tenant_username", columnNames = {"tenant_id", "username"}))
 @Setter
 @Getter
 @NoArgsConstructor
@@ -20,12 +21,16 @@ public class User {
     @Column(name = "id_person")
     private UUID id;
 
+    @Column(name = "tenant_id", nullable = false, length = 50, updatable = false,
+            columnDefinition = "varchar(50) default 'empresa-a'")
+    private String tenantId;
+
     @OneToOne(fetch = FetchType.LAZY)
     @MapsId
     @JoinColumn(name = "id_person")
     private Person person;
 
-    @Column(nullable = false, length = 25 , unique = true)
+    @Column(nullable = false, length = 25)
     private String username;
 
     @Column(name = "password", nullable = false, length = 100)

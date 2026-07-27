@@ -1,0 +1,45 @@
+# Configuracion NO sensible compartida por los microservicios.
+# Las credenciales viven en 02-secret.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parking-config
+  namespace: parqueadero
+data:
+  # ---- Infraestructura (DNS interno de Kubernetes) ----
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  MYSQL_HOST: "mysql"
+  MYSQL_PORT: "3306"
+  RABBITMQ_HOST: "rabbitmq"
+  RABBITMQ_PORT: "5672"
+
+  # ---- Topologia de mensajeria de auditoria ----
+  RABBITMQ_EXCHANGE: "audit_exchange"
+  RABBITMQ_ROUTING_KEY: "audit_routing_key"
+  RABBITMQ_QUEUE: "audit_queue"
+
+  # ---- Cache ----
+  REDIS_TTL: "60"
+
+  # ---- Multitenancy: tenants aprovisionados al arrancar ----
+  APP_TENANTS: "empresa-a,empresa-b,empresa-c"
+
+  # ---- Reglas de negocio ----
+  TARIFA_HORA: "1.0"
+
+  # ---- Rate limiting de la API (usado por ms-audith) ----
+  THROTTLE_TTL: "60000"
+  THROTTLE_LIMIT: "100"
+---
+# URLs de comunicacion servicio-a-servicio usadas por ms-tickets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parking-endpoints
+  namespace: parqueadero
+data:
+  MS_PERSONAS: "http://ms-usuarios:8080/api/personas"
+  MS_ESPACIOS: "http://ms-zonas:8082/api/espacios"
+  MS_VEHICULOS: "http://ms-vehiculos:3000/vehiculos/placa"
+  MS_AUTH_LOGIN: "http://ms-usuarios:8080/api/auth/login"

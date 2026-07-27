@@ -8,6 +8,7 @@ import ec.edu.espe.zonas.entity.Zona;
 import ec.edu.espe.zonas.entity.Espacio;
 import ec.edu.espe.zonas.repository.ZonaRepositorio;
 import org.springframework.stereotype.Component;
+import ec.edu.espe.zonas.tenant.TenantContext;
 
 @Component
 public class MapperUtils {
@@ -35,7 +36,7 @@ public class MapperUtils {
         int count = 1;
         String candidate = String.format("%s-%s-%02d", prefix, t, count);
         
-        while (repositorio.existsByCodigo(candidate)) {
+        while (repositorio.existsByTenantIdAndCodigo(TenantContext.get(), candidate)) {
             count++;
             candidate = String.format("%s-%s-%02d", prefix, t, count);
         }
@@ -46,6 +47,7 @@ public class MapperUtils {
         if(dto==null)return null;
 
         return Zona.builder()
+                .tenantId(TenantContext.get())
                 .nombre(dto.getNombre())
                 .codigo(dto.getCodigo())
                 .descripcion(dto.getDescripcion())
@@ -74,6 +76,7 @@ public class MapperUtils {
         if(dto==null)return null;
 
         return Espacio.builder()
+                .tenantId(TenantContext.get())
                 .nombre(dto.getNombre())
                 .codigo(dto.getCodigo())
                 .descripcion(dto.getDescripcion())
@@ -85,6 +88,7 @@ public class MapperUtils {
         if(dto==null)return null;
 
         return Espacio.builder()
+                .tenantId(TenantContext.get())
                 .nombre(dto.getNombre())
                 .codigo(dto.getCodigo())
                 .descripcion(dto.getDescripcion())

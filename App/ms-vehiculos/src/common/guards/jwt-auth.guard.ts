@@ -7,15 +7,26 @@ export class JwtAuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
+    const tenantId = String(request.headers['x-tenant-id'] || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(tenantId)) {
+      throw new UnauthorizedException('X-Tenant-ID es obligatorio y tiene un formato invalido');
+    }
     const authHeader = request.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const cookieName = `PARKING_TOKEN_${tenantId}=`;
+    const cookieToken = String(request.headers.cookie || '').split(';')
+      .map((part: string) => part.trim()).find((part: string) => part.startsWith(cookieName))?.slice(cookieName.length);
+    if ((!authHeader || !authHeader.startsWith('Bearer ')) && !cookieToken) {
       throw new UnauthorizedException('Token no proporcionado o formato inválido');
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = cookieToken || authHeader.split(' ')[1];
     try {
       const payload = jwt.verify(token, this.jwtSecret) as any;
+      if (payload.tenant_id !== tenantId) {
+        throw new UnauthorizedException('El token pertenece a otra empresa');
+      }
       request.user = payload;
+      request.tenantId = tenantId;
 
       const method = request.method;
       const roles: string[] = payload.roles || [];

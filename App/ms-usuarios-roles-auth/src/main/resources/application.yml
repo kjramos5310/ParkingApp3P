@@ -13,5 +13,40 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
     open-in-view: false
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:admin}
+    password: ${RABBITMQ_PASSWORD:admin123}
 server:
   port: 8080
+
+# Actuator: solo health e info se exponen (probes de Kubernetes)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+# Documentacion OpenAPI / Swagger UI
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+# Configuracion de auditoria: debe coincidir con el consumidor de ms-audith
+app:
+  tenants: ${APP_TENANTS:empresa-a,empresa-b}
+  jwt:
+    secret: ${JWT_SECRET:9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6}
+  cookie:
+    secure: ${COOKIE_SECURE:false}
+  audit:
+    exchange: ${RABBITMQ_EXCHANGE:audit_exchange}
+    routing-key: ${RABBITMQ_ROUTING_KEY:audit_routing_key}
+    servicio: ms-usuarios

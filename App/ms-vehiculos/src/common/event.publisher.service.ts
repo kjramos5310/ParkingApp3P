@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import * as amqp from 'amqplib';
 
 export interface AuditEvent {
+    tenant_id: string;
     servicio: string;
     accion: string;
     entidad: string;

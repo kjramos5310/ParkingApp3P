@@ -52,11 +52,12 @@ export class AuditInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest();
     const { method, url, body, params, user } = request;
 
-    // Mapping HTTP method to auditoria accion: crear, actualizar, eliminar, consultar
-    let accion = 'consultar';
-    if (method === 'POST') accion = 'crear';
-    if (method === 'PUT' || method === 'PATCH') accion = 'actualizar';
-    if (method === 'DELETE') accion = 'eliminar';
+    // Vocabulario unificado con ms-usuarios, ms-zonas y ms-tickets para que el
+    // panel de auditoria pueda filtrar por accion en todos los servicios.
+    let accion = 'READ';
+    if (method === 'POST') accion = 'CREATE';
+    if (method === 'PUT' || method === 'PATCH') accion = 'UPDATE';
+    if (method === 'DELETE') accion = 'DELETE';
 
     // Must be lowercase and simple to pass entity regex validation /^[a-z_]+$/
     const entidad = 'vehiculo'; 
@@ -102,6 +103,7 @@ export class AuditInterceptor implements NestInterceptor {
             }
 
             const auditEvent: AuditEvent = {
+              tenant_id: request.tenantId,
               servicio: 'ms-vehiculos',
               accion,
               entidad,
@@ -132,6 +134,7 @@ export class AuditInterceptor implements NestInterceptor {
             let usuarioStr = user?.sub || user?.username || 'admin_user';
             
             const auditEvent: AuditEvent = {
+              tenant_id: request.tenantId,
               servicio: 'ms-vehiculos',
               accion,
               entidad,

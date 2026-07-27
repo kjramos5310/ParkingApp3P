@@ -6,19 +6,21 @@ export interface TicketEvent {
   data: any;
 }
 
-/**
- * Bus de eventos en memoria para publicar cambios (creación/cierre de tickets,
- * cambios de estado de espacios) hacia los clientes SSE conectados.
- */
 @Injectable()
-export class TicketsEventsService {
-  private readonly stream$ = new Subject<TicketEvent>();
+export class EventsService {
+  private readonly streams = new Map<string, Subject<TicketEvent>>();
 
-  asObservable(): Observable<TicketEvent> {
-    return this.stream$.asObservable();
+  emit(tenantId: string, event: TicketEvent): void {
+    this.streamFor(tenantId).next(event);
   }
 
-  emit(event: TicketEvent): void {
-    this.stream$.next(event);
+  asObservable(tenantId: string): Observable<TicketEvent> {
+    return this.streamFor(tenantId).asObservable();
+  }
+
+  private streamFor(tenantId: string): Subject<TicketEvent> {
+    let stream = this.streams.get(tenantId);
+    if (!stream) { stream = new Subject<TicketEvent>(); this.streams.set(tenantId, stream); }
+    return stream;
   }
 }

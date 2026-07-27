@@ -1,39 +1,23 @@
-import { Controller, Sse } from '@nestjs/common';
-import { Observable, merge, of } from 'rxjs';
-import { map } from 'rxjs/operators';
-import { Public } from '../common/decorators/public.decorator';
-import { TicketEvent, TicketsEventsService } from './events.service';
+import { Controller, Headers, MessageEvent, Sse } from '@nestjs/common';
+import { Observable, interval, map, merge } from 'rxjs';
+import { EventsService } from './events.service';
 
-interface SseMessage {
-  data: string | object;
-  type?: string;
-  id?: string;
-  retry?: number;
-}
-
-@Controller()
+@Controller('sse')
 export class EventsController {
-  constructor(private readonly eventsService: TicketsEventsService) {}
+  constructor(private readonly eventsService: EventsService) {}
 
-  /**
-   * Stream SSE que consume el dashboard en http://localhost:3002/sse/eventos
-   * Emite un evento inicial de conexión y luego los eventos de tickets/espacios.
-   */
-  @Public()
-  @Sse('sse/eventos')
-  eventos(): Observable<SseMessage> {
-    const init$ = of<SseMessage>({
-      type: 'message',
-      data: { type: 'INIT', message: 'Conectado a ms-tickets SSE' },
-    });
-
-    const stream$ = this.eventsService.asObservable().pipe(
-      map<TicketEvent, SseMessage>((event) => ({
-        type: event.type,
-        data: event.data,
-      })),
+  // Stream SSE consumido por el dashboard (http://localhost:3002/sse/eventos)
+  @Sse('eventos')
+  eventos(@Headers('x-tenant-id') tenantId: string): Observable<MessageEvent> {
+    // Eventos reales de tickets -> mensaje por defecto (onmessage en el frontend)
+    const eventos$ = this.eventsService.asObservable(tenantId).pipe(
+      map((e) => ({ data: e }) as MessageEvent),
     );
-
-    return merge(init$, stream$);
+    // Heartbeat como evento nombrado 'ping' (el frontend lo ignora) para
+    // mantener viva la conexion.
+    const heartbeat$ = interval(25000).pipe(
+      map(() => ({ type: 'ping', data: 'keep-alive' }) as MessageEvent),
+    );
+    return merge(eventos$, heartbeat$);
   }
 }

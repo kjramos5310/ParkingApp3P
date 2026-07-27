@@ -1,0 +1,67 @@
+# Frontend SPA (React + Vite servido por nginx).
+# El bundle es estatico: llama a /api/* del mismo origen, que el Ingress
+# enruta hacia Kong. No necesita variables de entorno en tiempo de ejecucion.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: parqueadero
+  labels:
+    app: frontend
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: parkingapp/frontend:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 80
+          env:
+            # nginx reenvia /api aqui. En la practica el Ingress intercepta
+            # /api antes de llegar al pod, pero mantener el valor correcto
+            # deja la imagen utilizable tambien sin Ingress (port-forward).
+            - name: KONG_UPSTREAM
+              value: "kong-proxy:8000"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80

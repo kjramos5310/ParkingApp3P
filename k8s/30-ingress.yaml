@@ -1,0 +1,79 @@
+# Ingress: unico punto de entrada publico del sistema.
+#
+#   parqueadero.espe.edu.ec/         -> Service frontend  (SPA)
+#   parqueadero.espe.edu.ec/api/*    -> Service kong-proxy (API Gateway)
+#
+# El host comodin *.parqueadero.espe.edu.ec habilita el aislamiento de tenants
+# por subdominio (empresa-a.parqueadero.espe.edu.ec), que el frontend detecta
+# para fijar la cabecera X-Tenant-ID.
+#
+# Requiere el controlador ingress-nginx:
+#   minikube addons enable ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: parqueadero-ingress
+  namespace: parqueadero
+  annotations:
+    # --- Enrutamiento ---
+    nginx.ingress.kubernetes.io/use-regex: "true"
+
+    # --- Server-Sent Events ---
+    # Sin estas tres opciones nginx acumula el stream en un buffer y el
+    # dashboard recibe los eventos a rafagas (o nunca).
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+    # --- TLS ---
+    # Redirige HTTP a HTTPS. Ponlo en "false" si aun no tienes certificado.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Con cert-manager instalado, descomenta para emitir el certificado solo:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - parqueadero.espe.edu.ec
+        - "*.parqueadero.espe.edu.ec"
+      secretName: parqueadero-tls
+  rules:
+    - host: parqueadero.espe.edu.ec
+      http:
+        paths:
+          # La API va primero: las reglas mas especificas deben preceder a "/".
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: kong-proxy
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+    # Multitenancy por subdominio: mismas rutas para cualquier tenant.
+    - host: "*.parqueadero.espe.edu.ec"
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: kong-proxy
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

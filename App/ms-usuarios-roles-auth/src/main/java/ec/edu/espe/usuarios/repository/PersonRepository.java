@@ -7,7 +7,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface PersonRepository extends JpaRepository<Person, UUID> {
-    boolean existsByDni(String dni);
-    boolean existsByEmail(String email);
-    Optional<Person> findByDni(String dni);
+    boolean existsByTenantIdAndDni(String tenantId, String dni);
+    boolean existsByTenantIdAndEmail(String tenantId, String email);
+    Optional<Person> findByTenantIdAndDni(String tenantId, String dni);
+    Optional<Person> findByTenantIdAndId(String tenantId, UUID id);
 }

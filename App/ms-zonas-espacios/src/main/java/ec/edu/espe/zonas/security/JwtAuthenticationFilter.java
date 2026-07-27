@@ -19,6 +19,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.List;
 import java.util.stream.Collectors;
+import ec.edu.espe.zonas.tenant.TenantContext;
 
 @Component
 @RequiredArgsConstructor
@@ -36,6 +37,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String jwt = getJwtFromRequest(request);
 
             if (StringUtils.hasText(jwt) && tokenValidator.validateToken(jwt)) {
+                if (!TenantContext.get().equals(tokenValidator.getTenantFromJWT(jwt))) {
+                    response.sendError(HttpServletResponse.SC_FORBIDDEN, "El token pertenece a otra empresa");
+                    return;
+                }
                 String username = tokenValidator.getUsernameFromJWT(jwt);
                 List<String> roles = tokenValidator.getRolesFromJWT(jwt);
 
@@ -70,6 +75,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String bearerToken = request.getHeader("Authorization");
         if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
             return bearerToken.substring(7);
+        }
+        // La API EventSource del navegador no permite enviar cabeceras propias,
+        // por lo que el stream SSE transporta el token como parametro de la URL
+        // (mismo nombre que espera el plugin jwt de Kong: uri_param_names=[jwt]).
+        if (request.getRequestURI().endsWith("/sse")) {
+            String paramToken = request.getParameter("jwt");
+            if (StringUtils.hasText(paramToken)) {
+                return paramToken;
+            }
+        }
+        if (request.getCookies() != null) {
+            for (jakarta.servlet.http.Cookie cookie : request.getCookies()) {
+                if (("PARKING_TOKEN_" + TenantContext.get()).equals(cookie.getName())) return cookie.getValue();
+            }
         }
         return null;
     }

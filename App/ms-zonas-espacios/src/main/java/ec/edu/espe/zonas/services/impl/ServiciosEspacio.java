@@ -1,5 +1,8 @@
 package ec.edu.espe.zonas.services.impl;
 
+import tools.jackson.core.type.TypeReference;
+import ec.edu.espe.zonas.audit.AuditPublisher;
+import ec.edu.espe.zonas.cache.RedisCacheService;
 import ec.edu.espe.zonas.dto.request.EspacioRequestDTO;
 import ec.edu.espe.zonas.dto.response.EspacioResponseDto;
 import ec.edu.espe.zonas.entity.EstadoEspacio;
@@ -8,6 +11,7 @@ import ec.edu.espe.zonas.entity.Zona;
 import ec.edu.espe.zonas.repository.EspacioRepository;
 import ec.edu.espe.zonas.repository.ZonaRepositorio;
 import ec.edu.espe.zonas.services.interfaz.EspacioService;
+import ec.edu.espe.zonas.sse.EspacioEventService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -18,34 +22,45 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import java.util.concurrent.CopyOnWriteArrayList;
+import ec.edu.espe.zonas.tenant.TenantContext;
 
 @Service
 @RequiredArgsConstructor
 public class ServiciosEspacio implements EspacioService {
 
+    private static final String CACHE_ESPACIOS = "espacios:all";
+
+    /** Entidad reportada a auditoria (debe cumplir ^[a-z_]{4,15}$). */
+    private static final String ENTIDAD_AUDIT = "espacios";
+
     private final EspacioRepository espacioRepository;
     private final ZonaRepositorio zonaRepositorio;
-    private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
+    private final EspacioEventService espacioEventService;
+    private final RedisCacheService cache;
+    private final AuditPublisher auditPublisher;
 
     @Override
     @Transactional(readOnly = true)
     public List<EspacioResponseDto> obtenerEspacios() {
-        return espacioRepository.findAll().stream()
-                .filter(Espacio::isActive)
-                .map(this::mapToEspacioResponseDto)
-                .collect(Collectors.toList());
+        // Cache Redis: la 1ra lectura consulta la BD (MISS+SET); las siguientes salen de Redis (HIT).
+        // Se invalida (EVICT) cada vez que un espacio cambia (crear/actualizar/eliminar/cambiar estado).
+        return cache.getOrSet(
+                CACHE_ESPACIOS,
+                new TypeReference<List<EspacioResponseDto>>() {},
+                () -> espacioRepository.findAllByTenantId(TenantContext.get()).stream()
+                        .filter(Espacio::isActive)
+                        .map(this::mapToEspacioResponseDto)
+                        .collect(Collectors.toList()));
     }
 
     @Override
     @Transactional
     public EspacioResponseDto crearEspacio(EspacioRequestDTO requestDTO) {
-        Zona zona = zonaRepositorio.findById(requestDTO.getIdZona())
+        Zona zona = zonaRepositorio.findByTenantIdAndId(TenantContext.get(), requestDTO.getIdZona())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "La zona especificada no existe"));
 
         // Validar capacidad de la zona
-        long activeSpacesCount = espacioRepository.findByZonaId(zona.getId()).stream()
+        long activeSpacesCount = espacioRepository.findByTenantIdAndZonaId(TenantContext.get(), zona.getId()).stream()
                 .filter(Espacio::isActive)
                 .count();
 
@@ -54,7 +69,7 @@ public class ServiciosEspacio implements EspacioService {
                     "No se puede crear el espacio. La zona '" + zona.getNombre() + "' ha alcanzado su capacidad máxima de " + zona.getCapacidad() + " espacios.");
         }
 
-        if (espacioRepository.existsByNombre(requestDTO.getNombre())) {
+        if (espacioRepository.existsByTenantIdAndNombre(TenantContext.get(), requestDTO.getNombre())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe un espacio con el nombre: " + requestDTO.getNombre());
         }
 
@@ -72,7 +87,7 @@ public class ServiciosEspacio implements EspacioService {
         
         // Garantizar unicidad en caso de que existan códigos similares
         int offset = 1;
-        while (espacioRepository.existsByCodigo(codigo)) {
+        while (espacioRepository.existsByTenantIdAndCodigo(TenantContext.get(), codigo)) {
             codigo = String.format("%s-%02d", zona.getCodigo(), nextIndex + offset);
             offset++;
         }
@@ -80,6 +95,7 @@ public class ServiciosEspacio implements EspacioService {
         String nombre = codigo;
 
         Espacio espacio = Espacio.builder()
+                .tenantId(TenantContext.get())
                 .nombre(nombre)
                 .codigo(codigo.toUpperCase())
                 .descripcion(requestDTO.getDescripcion())
@@ -89,32 +105,36 @@ public class ServiciosEspacio implements EspacioService {
                 .build();
 
         espacio = espacioRepository.save(espacio);
-        return mapToEspacioResponseDto(espacio);
+        EspacioResponseDto dto = mapToEspacioResponseDto(espacio);
+        espacioEventService.publishEspacioCambiado(dto);
+        cache.evict(CACHE_ESPACIOS);
+        auditPublisher.publish("CREATE", ENTIDAD_AUDIT, datosDe(dto));
+        return dto;
     }
 
     @Override
     @Transactional
     public EspacioResponseDto actualizarEspacio(UUID id, EspacioRequestDTO requestDTO) {
-        Espacio espacio = espacioRepository.findById(id)
+        Espacio espacio = espacioRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Espacio no encontrado"));
 
         if (!espacio.getNombre().equalsIgnoreCase(requestDTO.getNombre()) && 
-                espacioRepository.existsByNombre(requestDTO.getNombre())) {
+                espacioRepository.existsByTenantIdAndNombre(TenantContext.get(), requestDTO.getNombre())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe otro espacio con el nombre: " + requestDTO.getNombre());
         }
 
         if (requestDTO.getCodigo() != null && !requestDTO.getCodigo().equalsIgnoreCase(espacio.getCodigo()) && 
-                espacioRepository.existsByCodigo(requestDTO.getCodigo())) {
+                espacioRepository.existsByTenantIdAndCodigo(TenantContext.get(), requestDTO.getCodigo())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe otro espacio con el codigo: " + requestDTO.getCodigo());
         }
 
         Zona zona = espacio.getZona();
         // Si cambia de zona, validar la capacidad de la nueva zona
         if (!zona.getId().equals(requestDTO.getIdZona())) {
-            zona = zonaRepositorio.findById(requestDTO.getIdZona())
+            zona = zonaRepositorio.findByTenantIdAndId(TenantContext.get(), requestDTO.getIdZona())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "La nueva zona especificada no existe"));
 
-            long activeSpacesInNewZone = espacioRepository.findByZonaId(zona.getId()).stream()
+            long activeSpacesInNewZone = espacioRepository.findByTenantIdAndZonaId(TenantContext.get(), zona.getId()).stream()
                     .filter(Espacio::isActive)
                     .count();
 
@@ -133,22 +153,30 @@ public class ServiciosEspacio implements EspacioService {
         espacio.setTipo(requestDTO.getTipo());
 
         espacio = espacioRepository.save(espacio);
-        return mapToEspacioResponseDto(espacio);
+        EspacioResponseDto dto = mapToEspacioResponseDto(espacio);
+        espacioEventService.publishEspacioCambiado(dto);
+        cache.evict(CACHE_ESPACIOS);
+        auditPublisher.publish("UPDATE", ENTIDAD_AUDIT, datosDe(dto));
+        return dto;
     }
 
     @Override
     @Transactional
     public void eliminarEspacio(UUID id) {
-        Espacio espacio = espacioRepository.findById(id)
+        Espacio espacio = espacioRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Espacio no encontrado"));
         espacio.setActive(false);
-        espacioRepository.save(espacio);
+        espacio = espacioRepository.save(espacio);
+        EspacioResponseDto dto = mapToEspacioResponseDto(espacio);
+        espacioEventService.publishEspacioCambiado(dto);
+        cache.evict(CACHE_ESPACIOS);
+        auditPublisher.publish("DELETE", ENTIDAD_AUDIT, datosDe(dto));
     }
 
     @Override
     @Transactional(readOnly = true)
     public EspacioResponseDto obtenerEspacio(UUID id) {
-        Espacio espacio = espacioRepository.findById(id)
+        Espacio espacio = espacioRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .filter(Espacio::isActive)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Espacio no encontrado"));
         return mapToEspacioResponseDto(espacio);
@@ -157,7 +185,7 @@ public class ServiciosEspacio implements EspacioService {
     @Override
     @Transactional(readOnly = true)
     public List<EspacioResponseDto> obtenerEspaciosPorEstado(EstadoEspacio estado) {
-        return espacioRepository.findByEstado(estado).stream()
+        return espacioRepository.findByTenantIdAndEstado(TenantContext.get(), estado).stream()
                 .filter(Espacio::isActive)
                 .map(this::mapToEspacioResponseDto)
                 .collect(Collectors.toList());
@@ -165,11 +193,37 @@ public class ServiciosEspacio implements EspacioService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<EspacioResponseDto> obtenerEspaciosPorZonaYPorEstado(UUID idZona, EstadoEspacio estado) {
-        if (!zonaRepositorio.existsById(idZona)) {
+    public List<EspacioResponseDto> obtenerEspaciosPorZona(UUID idZona) {
+        if (!zonaRepositorio.existsByTenantIdAndId(TenantContext.get(), idZona)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "La zona especificada no existe");
         }
-        return espacioRepository.findByZonaIdAndEstado(idZona, estado).stream()
+        // Incluye espacios deshabilitados para poder mostrarlos en la vista de zona
+        return espacioRepository.findByTenantIdAndZonaId(TenantContext.get(), idZona).stream()
+                .map(this::mapToEspacioResponseDto)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public void deshabilitarEspaciosDeZona(UUID idZona) {
+        List<Espacio> espacios = espacioRepository.findByTenantIdAndZonaId(TenantContext.get(), idZona);
+        for (Espacio espacio : espacios) {
+            if (espacio.isActive()) {
+                espacio.setActive(false);
+                espacio = espacioRepository.save(espacio);
+                espacioEventService.publishEspacioCambiado(mapToEspacioResponseDto(espacio));
+            }
+        }
+        cache.evict(CACHE_ESPACIOS);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<EspacioResponseDto> obtenerEspaciosPorZonaYPorEstado(UUID idZona, EstadoEspacio estado) {
+        if (!zonaRepositorio.existsByTenantIdAndId(TenantContext.get(), idZona)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "La zona especificada no existe");
+        }
+        return espacioRepository.findByTenantIdAndZonaIdAndEstado(TenantContext.get(), idZona, estado).stream()
                 .filter(Espacio::isActive)
                 .map(this::mapToEspacioResponseDto)
                 .collect(Collectors.toList());
@@ -179,7 +233,7 @@ public class ServiciosEspacio implements EspacioService {
     @Transactional(readOnly = true)
     public Map<String, List<EspacioResponseDto>> obtenerEspaciosPorEstadoAgrupadosPorZona(EstadoEspacio estado) {
         // Obtenemos los espacios optimizadamente con JOIN FETCH para evitar N+1 queries de JPA
-        List<Espacio> espacios = espacioRepository.findByEstadoWithZona(estado);
+        List<Espacio> espacios = espacioRepository.findByEstadoWithZona(TenantContext.get(), estado);
         
         return espacios.stream()
                 .filter(Espacio::isActive)
@@ -192,10 +246,15 @@ public class ServiciosEspacio implements EspacioService {
     @Override
     @Transactional
     public EspacioResponseDto cambiarEstado(UUID id, EstadoEspacio estado) {
-        Espacio espacio = espacioRepository.findById(id)
+        Espacio espacio = espacioRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .filter(Espacio::isActive)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Espacio no encontrado"));
-        
+
+        // No se puede ocupar/reservar un espacio cuya zona esta deshabilitada
+        if (espacio.getZona() != null && !espacio.getZona().isActive()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La zona del espacio esta deshabilitada");
+        }
+
         if (estado == EstadoEspacio.RESERVADO && espacio.getEstado() != EstadoEspacio.DISPONIBLE) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El espacio no se puede reservar porque su estado actual es: " + espacio.getEstado());
         }
@@ -206,9 +265,24 @@ public class ServiciosEspacio implements EspacioService {
 
         espacio.setEstado(estado);
         espacio = espacioRepository.save(espacio);
-        EspacioResponseDto responseDto = mapToEspacioResponseDto(espacio);
-        notificarCambioEstado(responseDto);
-        return responseDto;
+        EspacioResponseDto dto = mapToEspacioResponseDto(espacio);
+        espacioEventService.publishEspacioCambiado(dto);
+        cache.evict(CACHE_ESPACIOS);
+        // El cambio de estado es el evento mas relevante para la trazabilidad:
+        // es el que refleja la ocupacion real del parqueadero.
+        auditPublisher.publish("UPDATE", ENTIDAD_AUDIT, datosDe(dto));
+        return dto;
+    }
+
+    /** Detalle del espacio que se adjunta al evento de auditoria. */
+    private Map<String, Object> datosDe(EspacioResponseDto dto) {
+        Map<String, Object> datos = new java.util.HashMap<>();
+        datos.put("id", dto.getId().toString());
+        datos.put("nombre", dto.getNombre());
+        datos.put("codigo", dto.getCodigo());
+        datos.put("estado", dto.getEstado() != null ? dto.getEstado().name() : null);
+        datos.put("zona", dto.getNombreZona());
+        return datos;
     }
 
     private EspacioResponseDto mapToEspacioResponseDto(Espacio espacio) {
@@ -223,69 +297,5 @@ public class ServiciosEspacio implements EspacioService {
                 .nombreZona(espacio.getZona() != null ? espacio.getZona().getNombre() : null)
                 .idZona(espacio.getZona() != null ? espacio.getZona().getId() : null)
                 .build();
-    }
-
-    @Override
-    public SseEmitter registrarSse() {
-        SseEmitter emitter = new SseEmitter(24 * 60 * 60 * 1000L); // 24 hours
-        this.emitters.add(emitter);
-
-        emitter.onCompletion(() -> this.emitters.remove(emitter));
-        emitter.onTimeout(() -> this.emitters.remove(emitter));
-        emitter.onError((e) -> this.emitters.remove(emitter));
-
-        try {
-            emitter.send(SseEmitter.event()
-                    .name("INIT")
-                    .data("Conexion SSE establecida con ms-zonas-espacios"));
-        } catch (java.io.IOException e) {
-            this.emitters.remove(emitter);
-        }
-
-        return emitter;
-    }
-
-    private void notificarCambioEstado(EspacioResponseDto dto) {
-        List<SseEmitter> fallidos = new java.util.ArrayList<>();
-        for (SseEmitter emitter : this.emitters) {
-            try {
-                emitter.send(SseEmitter.event()
-                        .name("espacio_cambiado")
-                        .data(dto));
-            } catch (Exception e) {
-                fallidos.add(emitter);
-            }
-        }
-        this.emitters.removeAll(fallidos);
-    }
-
-    @Override
-    @Transactional
-    public void desactivarEspaciosDeZona(UUID idZona) {
-        List<Espacio> espacios = espacioRepository.findByZonaId(idZona);
-        for (Espacio espacio : espacios) {
-            if (espacio.isActive()) {
-                espacio.setActive(false);
-                espacio = espacioRepository.save(espacio);
-                
-                EspacioResponseDto responseDto = mapToEspacioResponseDto(espacio);
-                notificarCambioEstado(responseDto);
-            }
-        }
-    }
-
-    @Override
-    public void notificarCambioZona(ec.edu.espe.zonas.dto.response.ZonaResponseDto dto, String eventName) {
-        List<SseEmitter> fallidos = new java.util.ArrayList<>();
-        for (SseEmitter emitter : this.emitters) {
-            try {
-                emitter.send(SseEmitter.event()
-                        .name(eventName)
-                        .data(dto));
-            } catch (Exception e) {
-                fallidos.add(emitter);
-            }
-        }
-        this.emitters.removeAll(fallidos);
     }
 }
