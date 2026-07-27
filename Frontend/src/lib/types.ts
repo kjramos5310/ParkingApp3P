@@ -94,3 +94,28 @@ export interface Sesion {
   roles: string[];
   expiresIn: number;
 }
+
+export interface EmpresaTenant {
+  tenantId: string;
+  nombreEmpresa: string;
+  adminUsername: string;
+  adminEmail: string;
+  userCount: number;
+  subdominioUrl: string;
+  parametroUrl: string;
+}
+
+export interface CrearEmpresaDto {
+  tenantId: string;
+  nombreEmpresa: string;
+  adminDni: string;
+  adminFirstName: string;
+  adminMiddleName?: string;
+  adminLastName: string;
+  adminEmail: string;
+  adminPhone?: string;
+  adminAddress?: string;
+  adminNationality?: string;
+  adminUsername: string;
+  adminPassword: string;
+}

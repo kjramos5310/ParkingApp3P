@@ -13,8 +13,9 @@ const ENLACES: Enlace[] = [
   { a: '/zonas', texto: 'Zonas' },
   { a: '/espacios', texto: 'Espacios' },
   { a: '/vehiculos', texto: 'Vehiculos' },
-  { a: '/usuarios', texto: 'Usuarios' },
+  { a: '/usuarios', texto: 'Usuarios', soloAdmin: true },
   { a: '/auditoria', texto: 'Auditoria', soloAdmin: true },
+  { a: '/superadmin', texto: 'Empresas (SuperAdmin)', soloAdmin: true },
 ];
 
 export function Shell() {

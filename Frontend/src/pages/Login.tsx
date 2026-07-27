@@ -135,6 +135,15 @@ export function Login() {
             Tu sesion queda ligada a la empresa indicada. Un token emitido para otra empresa es
             rechazado por el sistema.
           </p>
+
+          <div className="pt-4 border-t border-line-subtle text-center">
+            <a
+              href="/superadmin"
+              className="font-sign uppercase tracking-wider text-xs text-hivis font-bold hover:underline inline-block bg-board px-4 py-2 rounded text-white"
+            >
+              &raquo; Portal SuperAdmin (Gestionar Empresas)
+            </a>
+          </div>
         </form>
       </div>
     </div>

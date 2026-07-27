@@ -45,6 +45,7 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/tenants/**").permitAll()
                 .requestMatchers("/api/users/login", "/api/users/register").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/**").authenticated()
                 .anyRequest().hasRole("ADMIN")

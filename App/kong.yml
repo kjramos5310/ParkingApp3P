@@ -125,6 +125,19 @@ services:
           hide_client_headers: false
 
   # ---------------------------------------------------------------------------
+  # PUBLICO: gestion de tenants / empresas (SuperAdmin).
+  # ---------------------------------------------------------------------------
+  - name: tenants-service
+    host: usuarios-upstream
+    port: 8080
+    protocol: http
+    routes:
+      - name: tenants-route
+        paths:
+          - /api/tenants
+        strip_path: false
+
+  # ---------------------------------------------------------------------------
   # PROTEGIDO: gestion de usuarios, personas y roles.
   # ---------------------------------------------------------------------------
   - name: usuarios-service

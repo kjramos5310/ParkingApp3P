@@ -18,7 +18,7 @@ public class TenantContextFilter extends OncePerRequestFilter {
      * los pods permanentemente fuera de servicio.
      */
     private static final String[] RUTAS_SIN_TENANT = {
-            "/actuator", "/v3/api-docs", "/swagger-ui"
+            "/actuator", "/v3/api-docs", "/swagger-ui", "/api/tenants"
     };
 
     @Override

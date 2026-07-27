@@ -6,6 +6,7 @@ import { Espacios } from './pages/Espacios';
 import { Login } from './pages/Login';
 import { Ocupacion } from './pages/Ocupacion';
 import { Tickets } from './pages/Tickets';
+import { SuperAdmin } from './pages/SuperAdmin';
 import { Usuarios } from './pages/Usuarios';
 import { Vehiculos } from './pages/Vehiculos';
 import { Zonas } from './pages/Zonas';
@@ -17,6 +18,7 @@ export function App() {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/superadmin" element={<SuperAdmin />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -31,9 +33,9 @@ export function App() {
         <Route path="zonas" element={<Zonas />} />
         <Route path="espacios" element={<Espacios />} />
         <Route path="vehiculos" element={<Vehiculos />} />
-        <Route path="usuarios" element={<Usuarios />} />
-        {/* El panel de auditoria es exclusivo de roles administrativos */}
+        <Route path="usuarios" element={esAdmin ? <Usuarios /> : <Navigate to="/" replace />} />
         <Route path="auditoria" element={esAdmin ? <Auditoria /> : <Navigate to="/" replace />} />
+        <Route path="superadmin" element={<SuperAdmin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

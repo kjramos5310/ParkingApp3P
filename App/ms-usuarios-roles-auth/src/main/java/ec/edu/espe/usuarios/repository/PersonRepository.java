@@ -11,4 +11,6 @@ public interface PersonRepository extends JpaRepository<Person, UUID> {
     boolean existsByTenantIdAndEmail(String tenantId, String email);
     Optional<Person> findByTenantIdAndDni(String tenantId, String dni);
     Optional<Person> findByTenantIdAndId(String tenantId, UUID id);
+    java.util.List<Person> findAllByTenantId(String tenantId);
+    void deleteAllByTenantId(String tenantId);
 }

@@ -1,4 +1,6 @@
 import type {
+  CrearEmpresaDto,
+  EmpresaTenant,
   EventoAuditoria,
   Espacio,
   EstadoEspacio,
@@ -84,14 +86,15 @@ async function mensajeDeError(res: Response): Promise<string> {
 interface OpcionesPeticion {
   method?: string;
   body?: unknown;
-  tenant: string;
+  tenant?: string;
 }
 
-async function peticion<T>(ruta: string, opciones: OpcionesPeticion): Promise<T> {
-  const { method = 'GET', body, tenant } = opciones;
+async function peticion<T>(ruta: string, opciones?: OpcionesPeticion): Promise<T> {
+  const { method = 'GET', body, tenant } = opciones ?? {};
   const token = leerToken();
 
-  const headers: Record<string, string> = { 'X-Tenant-ID': tenant };
+  const headers: Record<string, string> = {};
+  if (tenant) headers['X-Tenant-ID'] = tenant;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -240,4 +243,16 @@ export const roles = {
 export const auditoria = {
   /** Kong expone el historial de ms-audith bajo /api/auditoria. */
   listar: (tenant: string) => peticion<EventoAuditoria[]>('/auditoria', { tenant }),
+};
+
+/* -------------------------------------------------------------------------- */
+/* SuperAdmin - Empresas / Tenants                                            */
+/* -------------------------------------------------------------------------- */
+
+export const empresas = {
+  listar: () => peticion<EmpresaTenant[]>('/tenants'),
+  crear: (datos: CrearEmpresaDto) =>
+    peticion<EmpresaTenant>('/tenants', { method: 'POST', body: datos }),
+  eliminar: (tenantId: string) =>
+    peticion<void>(`/tenants/${tenantId}`, { method: 'DELETE' }),
 };
