@@ -250,7 +250,7 @@ export function Vehiculos() {
 
       {dialogoAbierto && (
         <Dialogo titulo="Registrar vehiculo" onCerrar={() => setDialogoAbierto(false)}>
-          <form onSubmit={crear} className="space-y-4">
+          <form onSubmit={guardar} className="space-y-4">
             {errorFormulario && <Aviso tipo="error">{errorFormulario}</Aviso>}
 
             <Campo label="Tipo de vehiculo">
