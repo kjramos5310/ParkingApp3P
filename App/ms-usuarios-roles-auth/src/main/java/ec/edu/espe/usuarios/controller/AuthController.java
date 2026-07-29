@@ -13,6 +13,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
+import java.time.Duration;
+import ec.edu.espe.usuarios.tenant.TenantContext;
+import org.springframework.beans.factory.annotation.Value;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -20,6 +25,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final UserService userService;
+
+    @Value("${app.cookie.secure:false}")
+    private boolean secureCookie;
 
     @PostMapping("/register")
     public ResponseEntity<UserResponse> register(@Valid @RequestBody UserCreateRequest request) {
@@ -30,6 +38,13 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         LoginResponse response = userService.login(request);
-        return ResponseEntity.ok(response);
+        ResponseCookie cookie = ResponseCookie.from("PARKING_TOKEN_" + TenantContext.get(), response.getToken())
+                .httpOnly(true)
+                .secure(secureCookie)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(Duration.ofMillis(response.getExpiresIn()))
+                .build();
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, cookie.toString()).body(response);
     }
 }

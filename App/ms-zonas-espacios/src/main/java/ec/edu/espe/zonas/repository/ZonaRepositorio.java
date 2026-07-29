@@ -10,17 +10,14 @@ import java.util.UUID;
 
 public interface ZonaRepositorio extends JpaRepository<Zona, UUID> {
 
-    Optional<Zona> findByNombre(String nombre);
-
-    Optional<Zona> findByCodigo(String codigo);
-
-    List<Zona> findByActiveTrue();
-
-    List<Zona> findByTipo(TipoZona tipo);
-
-    boolean existsByNombre(String nombre);
-
-    boolean existsByCodigo(String codigo);
-
-    long countByTipo(TipoZona tipo);
+    Optional<Zona> findByTenantIdAndNombre(String tenantId, String nombre);
+    Optional<Zona> findByTenantIdAndCodigo(String tenantId, String codigo);
+    Optional<Zona> findByTenantIdAndId(String tenantId, UUID id);
+    List<Zona> findAllByTenantId(String tenantId);
+    List<Zona> findByTenantIdAndActiveTrue(String tenantId);
+    List<Zona> findByTenantIdAndTipo(String tenantId, TipoZona tipo);
+    boolean existsByTenantIdAndId(String tenantId, UUID id);
+    boolean existsByTenantIdAndNombre(String tenantId, String nombre);
+    boolean existsByTenantIdAndCodigo(String tenantId, String codigo);
+    long countByTenantIdAndTipo(String tenantId, TipoZona tipo);
 }

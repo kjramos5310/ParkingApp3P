@@ -22,6 +22,10 @@ public interface EspacioService {
 
     List<EspacioResponseDto> obtenerEspaciosPorEstado(EstadoEspacio estado);
 
+    List<EspacioResponseDto> obtenerEspaciosPorZona(UUID idZona);
+
+    void deshabilitarEspaciosDeZona(UUID idZona);
+
     List<EspacioResponseDto> obtenerEspaciosPorZonaYPorEstado(UUID idZona, EstadoEspacio estado);
 
     Map<String, List<EspacioResponseDto>> obtenerEspaciosPorEstadoAgrupadosPorZona(EstadoEspacio estado);

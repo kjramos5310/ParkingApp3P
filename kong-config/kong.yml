@@ -1,0 +1,476 @@
+_format_version: "3.0"
+_transform: true
+
+# =============================================================================
+# Kong API Gateway - configuracion declarativa (modo DB-less)
+#
+# Responsabilidades cubiertas aqui:
+#   - Enrutamiento    -> services + routes
+#   - Balanceo carga  -> upstreams con targets y health checks activos+pasivos
+#   - Autenticacion   -> plugin jwt sobre las rutas protegidas
+#   - Rate limiting   -> plugin rate-limiting global + limite estricto en /api/auth
+#   - Transformacion  -> plugins request-transformer / correlation-id
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Consumers: identidad que respalda la validacion de los JWT emitidos por
+# ms-usuarios. El plugin jwt busca el consumer cuyo credential.key coincide con
+# el claim "iss" del token (ver JwtTokenProvider.generateToken).
+#
+# El marcador __JWT_SECRET__ se reemplaza por el valor real de la variable de
+# entorno JWT_SECRET al arrancar el contenedor (ver el entrypoint de kong en
+# docker-compose.yml y el initContainer en k8s/08-kong.yaml). De este modo el
+# secreto no queda escrito ni en este archivo ni en el ConfigMap, y existe una
+# unica fuente de verdad compartida con los microservicios.
+#
+# NOTA: no sirve usar una referencia de vault ({vault://env/...}) aqui. El campo
+# "secret" de jwt_secrets no esta marcado como referenceable en el esquema de
+# Kong, asi que se guardaria tal cual y la firma nunca validaria.
+#
+# El algoritmo debe coincidir con el que fija JwtTokenProvider al firmar.
+# -----------------------------------------------------------------------------
+consumers:
+  - username: parqueadero-auth
+    jwt_secrets:
+      - key: parqueadero-auth
+        algorithm: HS256
+        secret: "__JWT_SECRET__"
+
+# -----------------------------------------------------------------------------
+# Upstreams: el balanceador de Kong. En Kubernetes cada target es un Service
+# que a su vez reparte entre las replicas del Deployment. El sondeo activo
+# reincorpora los targets que vuelven a responder y el pasivo saca de rotacion
+# a los que empiezan a fallar (circuit breaker).
+# -----------------------------------------------------------------------------
+upstreams:
+  - name: usuarios-upstream
+    targets:
+      - target: ms-usuarios:8080
+        weight: 100
+    healthchecks: &healthchecks
+      # Sondeo activo por TCP: es el que permite que un destino vuelva a
+      # rotacion. Con health checks solo pasivos el balanceador se bloquea:
+      # marca el destino como caido tras unos errores (por ejemplo, mientras
+      # la JVM arranca) y despues no puede recuperarlo, porque para volver a
+      # estar sano necesitaria trafico que ya no se le enruta.
+      # Se comprueba TCP y no HTTP porque cada servicio expone una ruta de
+      # salud distinta, y el puerto abierto es senal suficiente.
+      active:
+        type: tcp
+        # El valor por defecto de timeout es 1s. Con el nodo cargado (varias
+        # JVM arrancando a la vez) el connect tarda mas y el sondeo lo cuenta
+        # como timeout: a los 3 seguidos el destino queda fuera de rotacion y
+        # el gateway responde 503 "failure to get a peer from the ring-balancer"
+        # aunque el microservicio este perfectamente sano.
+        timeout: 3
+        healthy:
+          interval: 5
+          successes: 1
+        unhealthy:
+          interval: 5
+          tcp_failures: 3
+          timeouts: 3
+      # Sondeo pasivo: circuit breaker ante errores reales del servicio.
+      passive:
+        type: http
+        healthy:
+          successes: 1
+          http_statuses: [200, 201, 202, 204, 301, 302, 304, 400, 401, 403, 404, 409]
+        unhealthy:
+          http_failures: 10
+          tcp_failures: 3
+          timeouts: 3
+          http_statuses: [500, 502, 503, 504]
+
+  - name: zonas-upstream
+    targets:
+      - target: ms-zonas:8082
+        weight: 100
+    healthchecks: *healthchecks
+
+  - name: vehiculos-upstream
+    targets:
+      - target: ms-vehiculos:3000
+        weight: 100
+    healthchecks: *healthchecks
+
+  - name: tickets-upstream
+    targets:
+      - target: ms-tickets:3000
+        weight: 100
+    healthchecks: *healthchecks
+
+  - name: audith-upstream
+    targets:
+      - target: ms-audith:3004
+        weight: 100
+    healthchecks: *healthchecks
+
+services:
+  # ---------------------------------------------------------------------------
+  # PUBLICO: login y registro. Sin JWT (aun no existe token), pero con un rate
+  # limit estricto para mitigar fuerza bruta de credenciales.
+  # ---------------------------------------------------------------------------
+  - name: auth-service
+    host: usuarios-upstream
+    port: 8080
+    protocol: http
+    routes:
+      - name: auth-route
+        paths:
+          - /api/auth
+        strip_path: false
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 10
+          hour: 100
+          policy: local
+          limit_by: ip
+          fault_tolerant: true
+          hide_client_headers: false
+
+  # ---------------------------------------------------------------------------
+  # PUBLICO: gestion de tenants / empresas (SuperAdmin).
+  # ---------------------------------------------------------------------------
+  - name: tenants-service
+    host: usuarios-upstream
+    port: 8080
+    protocol: http
+    routes:
+      - name: tenants-route
+        paths:
+          - /api/tenants
+        strip_path: false
+
+  # ---------------------------------------------------------------------------
+  # PROTEGIDO: gestion de usuarios, personas y roles.
+  # ---------------------------------------------------------------------------
+  - name: usuarios-service
+    host: usuarios-upstream
+    port: 8080
+    protocol: http
+    routes:
+      - name: usuarios-route
+        paths:
+          - /api/users
+          - /api/usuarios
+          - /api/personas
+          # RoleController esta mapeado en /api/v1/roles (no /api/roles)
+          - /api/v1/roles
+        strip_path: false
+    plugins:
+      # Configuracion del plugin jwt reutilizada por el resto de servicios:
+      #   - key_claim_name: iss  -> localiza el consumer por el emisor del token
+      #   - uri_param_names      -> permite autenticar EventSource (SSE), que no
+      #                             puede enviar cabecera Authorization
+      #   - run_on_preflight     -> deja pasar el OPTIONS de CORS sin token
+      - name: jwt
+        config: &jwt-config
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          uri_param_names:
+            - jwt
+          header_names:
+            - authorization
+          run_on_preflight: false
+
+  # ---------------------------------------------------------------------------
+  # PROTEGIDO: zonas y espacios.
+  # ---------------------------------------------------------------------------
+  - name: zonas-service
+    host: zonas-upstream
+    port: 8082
+    protocol: http
+    routes:
+      - name: zonas-route
+        paths:
+          - /api/zonas
+          - /api/espacios
+        strip_path: false
+    plugins:
+      - name: jwt
+        config: *jwt-config
+
+  # ---------------------------------------------------------------------------
+  # PROTEGIDO: stream SSE de disponibilidad de espacios (diagrama: /api/sse).
+  # Reenvia a ms-zonas /api/espacios/sse. El buffering de respuesta se desactiva
+  # para que los eventos lleguen al navegador en el instante en que se emiten.
+  # ---------------------------------------------------------------------------
+  - name: espacios-sse-service
+    host: zonas-upstream
+    port: 8082
+    protocol: http
+    path: /api/espacios/sse
+    # Sin timeout de lectura: la conexion SSE permanece abierta indefinidamente.
+    read_timeout: 3600000
+    write_timeout: 3600000
+    connect_timeout: 60000
+    routes:
+      - name: espacios-sse-route
+        paths:
+          - /api/sse
+        strip_path: true
+    plugins:
+      - name: jwt
+        config: *jwt-config
+      - name: response-transformer
+        config:
+          add:
+            headers:
+              - "X-Accel-Buffering:no"
+              - "Cache-Control:no-cache"
+
+  # ---------------------------------------------------------------------------
+  # PROTEGIDO: vehiculos.
+  # ---------------------------------------------------------------------------
+  - name: vehiculos-service
+    host: vehiculos-upstream
+    port: 3000
+    protocol: http
+    path: /vehiculos
+    routes:
+      - name: vehiculos-route
+        paths:
+          - /api/vehiculos
+        strip_path: true
+    plugins:
+      - name: jwt
+        config: *jwt-config
+
+  # ---------------------------------------------------------------------------
+  # PROTEGIDO: tickets.
+  # ---------------------------------------------------------------------------
+  - name: tickets-service
+    host: tickets-upstream
+    port: 3000
+    protocol: http
+    path: /tickets
+    routes:
+      - name: tickets-route
+        paths:
+          - /api/tickets
+        strip_path: true
+    plugins:
+      - name: jwt
+        config: *jwt-config
+
+  # ---------------------------------------------------------------------------
+  # PROTEGIDO: stream SSE de tickets.
+  # ---------------------------------------------------------------------------
+  - name: ticket-events-service
+    host: tickets-upstream
+    port: 3000
+    protocol: http
+    path: /sse
+    read_timeout: 3600000
+    write_timeout: 3600000
+    connect_timeout: 60000
+    routes:
+      - name: ticket-events-route
+        paths:
+          - /api/ticket-events
+        strip_path: true
+    plugins:
+      - name: jwt
+        config: *jwt-config
+
+  # ---------------------------------------------------------------------------
+  # PROTEGIDO: consulta del historial de auditoria (solo roles administrativos,
+  # el propio ms-audith valida el rol ADMIN sobre el token).
+  # ---------------------------------------------------------------------------
+  - name: audit-service
+    host: audith-upstream
+    port: 3004
+    protocol: http
+    path: /api/audit
+    routes:
+      - name: audit-route
+        paths:
+          - /api/audit
+          - /api/auditoria
+        strip_path: true
+    plugins:
+      - name: jwt
+        config: *jwt-config
+      # Transformacion de solicitudes: marca el origen para diferenciar las
+      # consultas que entran por el gateway de las internas del cluster.
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Audit-Source:kong-gateway"
+
+# -----------------------------------------------------------------------------
+# Plugins globales (aplican a todas las rutas).
+# -----------------------------------------------------------------------------
+plugins:
+  - name: cors
+    config:
+      # Origenes permitidos: dominio productivo del Ingress y entornos locales.
+      origins:
+        - "https://parqueadero.espe.edu.ec"
+        - "http://parqueadero.espe.edu.ec"
+        - "http://localhost:5500"
+        - "http://localhost:5173"
+      headers:
+        - Accept
+        - Authorization
+        - Content-Type
+        - X-Tenant-ID
+        - X-Requested-With
+      exposed_headers:
+        - X-Tenant-ID
+        - X-RateLimit-Remaining-Minute
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+      max_age: 3600
+      credentials: true
+
+  # Aislamiento multitenant en el borde. Se ejecuta despues del plugin JWT
+  # (post-function tiene prioridad negativa): deriva X-Tenant-ID del claim
+  # firmado y rechaza cualquier discrepancia con 403.
+  #
+  # El tenant efectivo SIEMPRE sale del claim tenant_id del token. Cualquier
+  # alias que el cliente intente colar -- cabecera propia o parametro de la
+  # URL -- se compara contra ese claim y, si discrepa, la peticion muere aqui
+  # sin llegar a los microservicios internos. De ahi la lista de alias: cubre
+  # las variantes con las que se suele intentar la invasion de tenant
+  # (?tenant=, ?tenantId=, X-Tenant, X-Empresa, ...), no solo la canonica.
+  - name: post-function
+    config:
+      access:
+        - |
+          -- La busqueda de cabeceras en Kong ya es insensible a mayusculas;
+          -- los parametros de query no lo son, por eso se listan variantes.
+          local ALIAS_CABECERAS = {
+            "x-tenant-id", "x-tenant", "x-tenantid", "x-tenant-name",
+            "tenant", "tenant-id", "tenantid",
+            "x-empresa", "empresa", "x-empresa-id",
+          }
+          local ALIAS_PARAMETROS = {
+            "tenant_id", "tenant", "tenantId", "tenantid", "tenant-id",
+            "empresa", "empresa_id", "empresaId", "idEmpresa",
+          }
+
+          -- Un alias repetido llega como tabla; un flag sin valor, como boolean.
+          local function valor_unico(valor)
+            if type(valor) == "table" then
+              return valor[1]
+            end
+            if type(valor) == "string" then
+              return valor
+            end
+            return nil
+          end
+
+          local authorization = kong.request.get_header("authorization")
+          local token = nil
+
+          if authorization then
+            token = authorization:match("^[Bb]earer%s+(.+)$")
+          end
+          if not token then
+            token = valor_unico(kong.request.get_query_arg("jwt"))
+          end
+
+          -- Las rutas publicas (login y aprovisionamiento) no llevan JWT.
+          if not token then
+            return
+          end
+
+          local encoded_payload = token:match("^[^.]+%.([^.]+)%.[^.]+$")
+          if not encoded_payload then
+            return kong.response.exit(401, { message = "Token JWT invalido" })
+          end
+
+          encoded_payload = encoded_payload:gsub("-", "+"):gsub("_", "/")
+          local remainder = #encoded_payload % 4
+          if remainder > 0 then
+            encoded_payload = encoded_payload .. string.rep("=", 4 - remainder)
+          end
+
+          -- OJO: el sandbox de Lua de Kong prohibe require("cjson.safe") y
+          -- cualquier intento aborta la peticion con 500. El claim se extrae
+          -- con un patron sobre el JSON ya decodificado, que es suficiente:
+          -- tenant_id es siempre una cadena simple y la firma del token ya la
+          -- verifico el plugin jwt antes de llegar hasta aqui.
+          local decoded = ngx.decode_base64(encoded_payload)
+          local token_tenant = decoded and decoded:match('"tenant_id"%s*:%s*"([^"]*)"') or nil
+          if not token_tenant or token_tenant == "" then
+            return kong.response.exit(403, { message = "El token no contiene tenant_id" })
+          end
+
+          token_tenant = string.lower(token_tenant)
+
+          -- Devuelve el primer alias que no coincide con el claim del token.
+          local function alias_discrepante()
+            for _, nombre in ipairs(ALIAS_CABECERAS) do
+              local valor = valor_unico(kong.request.get_header(nombre))
+              if valor and valor ~= "" and string.lower(valor) ~= token_tenant then
+                return "cabecera " .. nombre, valor
+              end
+            end
+            for _, nombre in ipairs(ALIAS_PARAMETROS) do
+              local valor = valor_unico(kong.request.get_query_arg(nombre))
+              if valor and valor ~= "" and string.lower(valor) ~= token_tenant then
+                return "parametro " .. nombre, valor
+              end
+            end
+            return nil, nil
+          end
+
+          local origen, solicitado = alias_discrepante()
+          if origen then
+            kong.log.warn("Invasion de tenant rechazada: ", origen, "=", solicitado,
+                          " no coincide con el claim tenant_id=", token_tenant)
+            return kong.response.exit(403, {
+              message = "El tenant solicitado no coincide con el token",
+              origen = origen,
+              tenant_solicitado = string.lower(solicitado),
+            })
+          end
+
+          -- Los alias no canonicos se eliminan del trafico hacia el upstream:
+          -- ningun microservicio debe poder leer un tenant distinto del que
+          -- Kong acaba de validar contra la firma.
+          for _, nombre in ipairs(ALIAS_CABECERAS) do
+            if nombre ~= "x-tenant-id" then
+              kong.service.request.clear_header(nombre)
+            end
+          end
+
+          kong.service.request.set_header("X-Tenant-ID", token_tenant)
+
+  # Rate limiting general de la plataforma, contabilizado POR TENANT: la cuota
+  # de una empresa no puede agotarse por el trafico de otra. Kong solo admite
+  # una instancia global de cada plugin, de modo que este es el contador por
+  # tenant y el de /api/auth (mas estricto y por IP) cubre el trafico anonimo.
+  #
+  # Si la cabecera no viene -- peticiones sin autenticar -- el plugin cae
+  # automaticamente al identificador por IP, asi que nunca queda sin limite.
+  # En modo DB-less el contador es local a cada nodo de Kong (policy: local).
+  - name: rate-limiting
+    config:
+      minute: 120
+      hour: 3000
+      policy: local
+      limit_by: header
+      header_name: X-Tenant-ID
+      fault_tolerant: true
+      hide_client_headers: false
+
+  # Trazabilidad: identificador unico por peticion, propagado al upstream y
+  # devuelto al cliente. Permite correlacionar logs entre microservicios.
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      generator: uuid
+      echo_downstream: true
+
+  # Logging estructurado de cada solicitud en stdout. Kubernetes y Docker
+  # recolectan este flujo sin necesitar un volumen compartido.
+  - name: file-log
+    config:
+      path: /dev/stdout
+      reopen: true

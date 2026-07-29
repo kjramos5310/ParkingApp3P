@@ -1,5 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
+import { discrepanciaDeTenant } from '../tenant-aliases';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -7,14 +9,37 @@ export class JwtAuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
+    const tenantId = String(request.headers['x-tenant-id'] || request.query?.tenant_id || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(tenantId)) {
+      throw new UnauthorizedException('X-Tenant-ID es obligatorio y tiene un formato invalido');
+    }
+    request.tenantId = tenantId;
+
     const authHeader = request.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const cookieName = `PARKING_TOKEN_${tenantId}=`;
+    const cookieToken = String(request.headers.cookie || '').split(';')
+      .map((part: string) => part.trim()).find((part: string) => part.startsWith(cookieName))?.slice(cookieName.length);
+    if ((!authHeader || !authHeader.startsWith('Bearer ')) && !cookieToken) {
       throw new UnauthorizedException('Token no proporcionado o formato inválido');
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = cookieToken || authHeader.split(' ')[1];
     try {
       const payload = jwt.verify(token, this.jwtSecret) as any;
+      if (payload.tenant_id !== tenantId) {
+        throw new ForbiddenException('El token pertenece a otra empresa');
+      }
+
+      // Ningun alias adicional puede contradecir al tenant del token:
+      // ?tenant=empresa-b o X-Tenant: empresa-b con un token de empresa-a
+      // se rechazan con 403 antes de tocar la base de datos.
+      const discrepancia = discrepanciaDeTenant(request, tenantId);
+      if (discrepancia) {
+        throw new ForbiddenException(
+          `El tenant solicitado no coincide con el del token (${discrepancia})`,
+        );
+      }
+
       request.user = payload;
 
       const method = request.method;
@@ -30,11 +55,12 @@ export class JwtAuthGuard implements CanActivate {
         (role) => role.toUpperCase() === 'ROLE_ADMIN' || role.toUpperCase() === 'ADMIN'
       );
       if (!hasAdmin) {
-        throw new UnauthorizedException('No tiene permisos para realizar esta operación');
+        throw new ForbiddenException('No tiene permisos para realizar esta operación');
       }
 
       return true;
     } catch (err) {
+      if (err instanceof ForbiddenException) throw err;
       throw new UnauthorizedException('Token inválido o expirado');
     }
   }

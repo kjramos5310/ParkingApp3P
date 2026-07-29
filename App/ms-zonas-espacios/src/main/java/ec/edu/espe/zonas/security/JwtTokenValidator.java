@@ -40,6 +40,11 @@ public class JwtTokenValidator {
         return claims.get("roles", List.class);
     }
 
+    public String getTenantFromJWT(String token) {
+        return Jwts.parser().verifyWith(getSigningKey()).build()
+                .parseSignedClaims(token).getPayload().get("tenant_id", String.class);
+    }
+
     public boolean validateToken(String authToken) {
         try {
             Jwts.parser()

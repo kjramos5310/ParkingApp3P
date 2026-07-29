@@ -13,6 +13,7 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
+import ec.edu.espe.usuarios.tenant.TenantContext;
 
 import java.io.IOException;
 
@@ -32,6 +33,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String jwt = getJwtFromRequest(request);
 
             if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
+                if (!TenantContext.get().equals(tokenProvider.getTenantFromJWT(jwt))) {
+                    response.sendError(HttpServletResponse.SC_FORBIDDEN, "El token pertenece a otra empresa");
+                    return;
+                }
                 String username = tokenProvider.getUsernameFromJWT(jwt);
                 java.util.List<String> roles = tokenProvider.getRolesFromJWT(jwt);
 
@@ -66,6 +71,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String bearerToken = request.getHeader("Authorization");
         if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
             return bearerToken.substring(7);
+        }
+        if (request.getCookies() != null) {
+            for (jakarta.servlet.http.Cookie cookie : request.getCookies()) {
+                if (("PARKING_TOKEN_" + TenantContext.get()).equals(cookie.getName())) return cookie.getValue();
+            }
         }
         return null;
     }

@@ -2,6 +2,21 @@
 node_modules/
 target/
 dist/
+build/
+out/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Tests / cobertura / analisis estatico
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.scannerwork/
 
 # Archives
 *.rar
@@ -21,6 +36,16 @@ dist/
 .project
 bin/
 
-# Environment files
-.env
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
 
+# Claude Code (configuracion local, no se comparte)
+.claude/settings.local.json
+
+# Environment files (nunca commitear secretos)
+.env
+.env.local
+.env.*.local
+!.env.example

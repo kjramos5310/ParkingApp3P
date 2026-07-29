@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import ec.edu.espe.usuarios.tenant.TenantContext;
 
 @Service
 @RequiredArgsConstructor
@@ -43,14 +44,16 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserResponse createUser(UserCreateRequest userRequest) {
-        if (personRepository.existsByDni(userRequest.getDni())) {
+        String tenantId = TenantContext.get();
+        if (personRepository.existsByTenantIdAndDni(tenantId, userRequest.getDni())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "DNI already exists");
         }
-        if (personRepository.existsByEmail(userRequest.getEmail())) {
+        if (personRepository.existsByTenantIdAndEmail(tenantId, userRequest.getEmail())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
 
         Person person = Person.builder()
+                .tenantId(tenantId)
                 .dni(userRequest.getDni())
                 .firstName(userRequest.getFirstName())
                 .middleName(userRequest.getMiddleName())
@@ -69,6 +72,7 @@ public class UserServiceImpl implements UserService {
         String encodedPassword = passwordEncoder.encode(rawPassword);
 
         User user = User.builder()
+                .tenantId(tenantId)
                 .person(person)
                 .username(generarUsername(userRequest.getFirstName(), 
                 userRequest.getMiddleName(), 
@@ -111,7 +115,7 @@ public class UserServiceImpl implements UserService {
         String finalUsername = baseUsername;
         
         int count = 1;
-        while (userRepository.findByUsername(finalUsername).isPresent()) {
+        while (userRepository.findByTenantIdAndUsername(TenantContext.get(), finalUsername).isPresent()) {
             finalUsername = baseUsername + count;
             count++;
         }
@@ -122,7 +126,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(readOnly = true)
     public List<UserResponse> getUsers() {
-        return userRepository.findAll().stream()
+        return userRepository.findAllByTenantId(TenantContext.get()).stream()
                 .map(this::mapToUserResponse)
                 .toList();
     }
@@ -130,7 +134,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(readOnly = true)
     public UserResponse getUserById(UUID id) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         return mapToUserResponse(user);
     }
@@ -138,14 +142,14 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserResponse updateUser(UUID id, UserUpdateRequest userRequest) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         
         Person person = user.getPerson();
 
         // Validar si el email cambió y si el nuevo ya existe
         if (!person.getEmail().equalsIgnoreCase(userRequest.getEmail())) {
-            if (personRepository.existsByEmail(userRequest.getEmail())) {
+            if (personRepository.existsByTenantIdAndEmail(TenantContext.get(), userRequest.getEmail())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
             }
         }
@@ -178,7 +182,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public void deleteUser(UUID id) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         user.setActive(false);
         userRepository.save(user);
@@ -187,7 +191,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserResponse assigneRole(UUID userId, UUID roleId) {
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByTenantIdAndId(TenantContext.get(), userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Role role = roleRepository.findById(roleId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Rol no encontrado"));
@@ -256,7 +260,7 @@ public class UserServiceImpl implements UserService {
             SecurityContextHolder.getContext().setAuthentication(authentication);
             String jwt = jwtTokenProvider.generateToken(authentication);
 
-            User user = userRepository.findByUsername(loginRequest.getUsername())
+            User user = userRepository.findByTenantIdAndUsername(TenantContext.get(), loginRequest.getUsername())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
             
             user.setLastLogin(java.time.LocalDateTime.now());
@@ -294,5 +298,133 @@ public class UserServiceImpl implements UserService {
 
         // 3. Asignar el rol al usuario
         return assigneRole(userResponse.getId(), role.getId());
+    }
+
+    @Override
+    @Transactional
+    public ec.edu.espe.usuarios.dto.response.TenantResponseDto createTenant(ec.edu.espe.usuarios.dto.request.TenantRequestDto request) {
+        String slug = ec.edu.espe.usuarios.tenant.TenantContext.normalize(request.getTenantId());
+        
+        if (!userRepository.findAllByTenantId(slug).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La empresa con identificador '" + slug + "' ya existe.");
+        }
+
+        try {
+            ec.edu.espe.usuarios.tenant.TenantContext.set(slug);
+
+            Role adminRole = roleRepository.findByNameIgnoreCase("ADMIN")
+                    .orElseGet(() -> roleRepository.save(Role.builder()
+                            .name("ADMIN")
+                            .description("Administrator role")
+                            .active(true)
+                            .build()));
+
+            Role userRole = roleRepository.findByNameIgnoreCase("USER")
+                    .orElseGet(() -> roleRepository.save(Role.builder()
+                            .name("USER")
+                            .description("Default user role")
+                            .active(true)
+                            .build()));
+
+            String fn = request.getAdminFirstName().trim();
+            String mn = (request.getAdminMiddleName() != null && !request.getAdminMiddleName().trim().isEmpty())
+                    ? request.getAdminMiddleName().trim()
+                    : fn;
+            String phone = (request.getAdminPhone() != null && !request.getAdminPhone().trim().isEmpty())
+                    ? request.getAdminPhone().trim()
+                    : "0999999999";
+            String addr = (request.getAdminAddress() != null && !request.getAdminAddress().trim().isEmpty())
+                    ? request.getAdminAddress().trim()
+                    : "Principal";
+            String nat = (request.getAdminNationality() != null && !request.getAdminNationality().trim().isEmpty())
+                    ? request.getAdminNationality().trim()
+                    : "Ecuatoriana";
+
+            Person person = Person.builder()
+                    .tenantId(slug)
+                    .dni(request.getAdminDni().trim())
+                    .firstName(fn)
+                    .middleName(mn)
+                    .lastName(request.getAdminLastName().trim())
+                    .email(request.getAdminEmail().trim())
+                    .phone(phone)
+                    .address(addr)
+                    .nationality(nat)
+                    .active(true)
+                    .build();
+            person = personRepository.save(person);
+
+            String encodedPassword = passwordEncoder.encode(request.getAdminPassword().trim());
+            User user = User.builder()
+                    .tenantId(slug)
+                    .person(person)
+                    .username(request.getAdminUsername().trim().toLowerCase())
+                    .passwordHash(encodedPassword)
+                    .passwordHashColumn(encodedPassword)
+                    .active(true)
+                    .build();
+            user = userRepository.save(user);
+
+            assigneRole(user.getId(), adminRole.getId());
+
+            return ec.edu.espe.usuarios.dto.response.TenantResponseDto.builder()
+                    .tenantId(slug)
+                    .nombreEmpresa(request.getNombreEmpresa())
+                    .adminUsername(user.getUsername())
+                    .adminEmail(person.getEmail())
+                    .userCount(1)
+                    .subdominioUrl("http://" + slug + ".parqueadero.espe.edu.ec")
+                    .parametroUrl("http://localhost:5500/?tenant=" + slug)
+                    .build();
+        } finally {
+            ec.edu.espe.usuarios.tenant.TenantContext.clear();
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ec.edu.espe.usuarios.dto.response.TenantResponseDto> getAllTenants() {
+        List<String> tenantIds = userRepository.findDistinctTenants();
+        return tenantIds.stream().map(tId -> {
+            long count = userRepository.countByTenantId(tId);
+            List<User> users = userRepository.findAllByTenantId(tId);
+            String adminUser = users.stream()
+                    .filter(u -> u.getUsername().equalsIgnoreCase("admin"))
+                    .findFirst()
+                    .map(User::getUsername)
+                    .orElseGet(() -> users.isEmpty() ? "n/a" : users.get(0).getUsername());
+            String adminEmail = users.isEmpty() || users.get(0).getPerson() == null 
+                    ? "admin@" + tId + ".com" 
+                    : users.get(0).getPerson().getEmail();
+
+            String nombrePretty = tId.replace("-", " ");
+            nombrePretty = Character.toUpperCase(nombrePretty.charAt(0)) + nombrePretty.substring(1);
+
+            return ec.edu.espe.usuarios.dto.response.TenantResponseDto.builder()
+                    .tenantId(tId)
+                    .nombreEmpresa(nombrePretty)
+                    .adminUsername(adminUser)
+                    .adminEmail(adminEmail)
+                    .userCount(count)
+                    .subdominioUrl("http://" + tId + ".parqueadero.espe.edu.ec")
+                    .parametroUrl("http://localhost:5500/?tenant=" + tId)
+                    .build();
+        }).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public void deleteTenant(String tenantId) {
+        String slug = ec.edu.espe.usuarios.tenant.TenantContext.normalize(tenantId);
+        List<User> users = userRepository.findAllByTenantId(slug);
+        if (users.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontro la empresa '" + slug + "'");
+        }
+        for (User user : users) {
+            userRoleRepository.deleteAll(user.getUserRoles());
+        }
+        userRepository.deleteAll(users);
+        List<Person> persons = personRepository.findAllByTenantId(slug);
+        personRepository.deleteAll(persons);
     }
 }

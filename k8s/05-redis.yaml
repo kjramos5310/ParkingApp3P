@@ -1,0 +1,107 @@
+# Dos instancias de Redis independientes (cache efimero, sin persistencia):
+#   - redis-tickets: cachea validaciones de persona/vehiculo en ms-tickets
+#   - redis-zonas:   cachea la lista de espacios en ms-zonas-espacios
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-tickets
+  namespace: parqueadero
+  labels:
+    app: redis-tickets
+    tier: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-tickets
+  template:
+    metadata:
+      labels:
+        app: redis-tickets
+        tier: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-tickets
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: redis-tickets
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-zonas
+  namespace: parqueadero
+  labels:
+    app: redis-zonas
+    tier: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-zonas
+  template:
+    metadata:
+      labels:
+        app: redis-zonas
+        tier: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-zonas
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: redis-zonas
+  ports:
+    - port: 6379
+      targetPort: 6379
