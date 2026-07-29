@@ -10,6 +10,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.Map;
+import ec.edu.espe.usuarios.tenant.TenantContext;
 
 @RestController
 @RequestMapping("/api/personas")
@@ -20,7 +21,7 @@ public class PersonController {
 
     @GetMapping("/{dni}")
     public ResponseEntity<Map<String, Object>> getPersonByDni(@PathVariable String dni) {
-        Person person = personRepository.findByDni(dni)
+        Person person = personRepository.findByTenantIdAndDni(TenantContext.get(), dni)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Persona no encontrada"));
 
         Map<String, Object> response = new HashMap<>();

@@ -1,0 +1,110 @@
+# MS-Usuarios (Spring Boot): usuarios, personas, roles y emision de JWT.
+# Publica eventos de dominio a RabbitMQ y persiste en PostgreSQL (usuarios_db).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms-usuarios
+  namespace: parqueadero
+  labels:
+    app: ms-usuarios
+    tier: backend
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 1200
+  selector:
+    matchLabels:
+      app: ms-usuarios
+  template:
+    metadata:
+      labels:
+        app: ms-usuarios
+        tier: backend
+    spec:
+      containers:
+        - name: ms-usuarios
+          image: parkingapp/ms-usuarios:latest
+          imagePullPolicy: IfNotPresent # usa imagen local en minikube y GHCR en despliegues remotos
+          ports:
+            - containerPort: 8080
+          env:
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: 'true'
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres:5432/usuarios_db
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_USER
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: JWT_SECRET
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_PASSWORD
+            - name: COOKIE_SECURE
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: parking-config
+          # timeoutSeconds es obligatorio ponerlo: el valor por defecto es 1s y
+          # el actuator de una JVM bajo carga tarda mas que eso en contestar.
+          # Con 1s los sondeos fallaban por "context deadline exceeded", el
+          # kubelet mataba el contenedor (SIGKILL, exit 137) y el servicio
+          # entraba en CrashLoopBackOff aunque la aplicacion estuviera sana.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            failureThreshold: 90
+            periodSeconds: 10 # tolera hasta 15 min de arranque de la JVM
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "384Mi"
+              cpu: "150m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms-usuarios
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: ms-usuarios
+  ports:
+    - port: 8080
+      targetPort: 8080

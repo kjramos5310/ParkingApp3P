@@ -1,0 +1,336 @@
+{
+  "info": {
+    "name": "ParkingApp - Microservicios",
+    "_postman_id": "b6d2f1a0-0000-4a00-9000-parkingapp0001",
+    "description": "Coleccion para probar el stack Dockerizado de ParkingApp.\n\nFlujo recomendado:\n1) Auth > Login admin  (guarda {{token}} automaticamente)\n2) Zonas > Crear zona   (guarda {{zonaId}})\n3) Espacios > Crear espacio (guarda {{espacioId}})\n4) Espacios > Reservar / Cambiar estado / Deshabilitar\n5) Vehiculos > Crear vehiculo (guarda {{vehiculoId}})\n6) Tickets > Crear ticket (ver nota de prerequisitos)\n\nCredencial admin sembrada: admin / admin123 (rol ADMIN).\nLas escrituras (POST/PUT/PATCH/DELETE) requieren el token ADMIN; las lecturas de espacios/zonas son publicas.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": ["pm.request.headers.upsert({ key: 'X-Tenant-ID', value: pm.collectionVariables.get('tenant_id') });"]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "usuarios_url", "value": "http://localhost:8000" },
+    { "key": "zonas_url", "value": "http://localhost:8000" },
+    { "key": "vehiculos_url", "value": "http://localhost:8000/api" },
+    { "key": "tickets_url", "value": "http://localhost:8000/api" },
+    { "key": "tenant_id", "value": "empresa-a" },
+    { "key": "token", "value": "" },
+    { "key": "zonaId", "value": "" },
+    { "key": "espacioId", "value": "" },
+    { "key": "vehiculoId", "value": "" },
+    { "key": "ticketId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth (usuarios)",
+      "item": [
+        {
+          "name": "Login admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('token', json.token);",
+                  "pm.test('token recibido', () => pm.expect(json.token).to.be.a('string'));",
+                  "console.log('Roles:', json.roles);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{usuarios_url}}/api/auth/login", "host": ["{{usuarios_url}}"], "path": ["api", "auth", "login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}" }
+          }
+        },
+        {
+          "name": "Registrar usuario (rol USER)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{usuarios_url}}/api/auth/register", "host": ["{{usuarios_url}}"], "path": ["api", "auth", "register"] },
+            "body": { "mode": "raw", "raw": "{\n  \"dni\": \"1712345678\",\n  \"firstName\": \"Juan\",\n  \"middleName\": \"Carlos\",\n  \"lastName\": \"Perez\",\n  \"email\": \"juan.perez@espe.edu.ec\",\n  \"phone\": \"0987654321\",\n  \"address\": \"Sangolqui\",\n  \"nationality\": \"Ecuatoriana\",\n  \"password\": \"secret123\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Zonas",
+      "item": [
+        {
+          "name": "Crear zona (ADMIN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('zonaId', json.id);",
+                  "pm.test('zona creada (201)', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{zonas_url}}/api/zonas", "host": ["{{zonas_url}}"], "path": ["api", "zonas"] },
+            "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Zona Norte\",\n  \"codigo\": \"ZON-NOR\",\n  \"descripcion\": \"Zona norte del campus\",\n  \"capacidad\": 10,\n  \"tipo\": \"GENERAL\"\n}" }
+          }
+        },
+        {
+          "name": "Listar zonas (publico)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{zonas_url}}/api/zonas", "host": ["{{zonas_url}}"], "path": ["api", "zonas"] }
+          }
+        },
+        {
+          "name": "Obtener zona por id (publico)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{zonas_url}}/api/zonas/{{zonaId}}", "host": ["{{zonas_url}}"], "path": ["api", "zonas", "{{zonaId}}"] }
+          }
+        },
+        {
+          "name": "Actualizar zona (ADMIN)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{zonas_url}}/api/zonas/{{zonaId}}", "host": ["{{zonas_url}}"], "path": ["api", "zonas", "{{zonaId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Zona Norte (editada)\",\n  \"codigo\": \"ZON-NOR\",\n  \"descripcion\": \"Actualizada\",\n  \"capacidad\": 15,\n  \"tipo\": \"VIP\"\n}" }
+          }
+        },
+        {
+          "name": "Deshabilitar zona (DELETE, ADMIN)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{zonas_url}}/api/zonas/{{zonaId}}", "host": ["{{zonas_url}}"], "path": ["api", "zonas", "{{zonaId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Espacios",
+      "item": [
+        {
+          "name": "Crear espacio (ADMIN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('espacioId', json.id);",
+                  "pm.test('espacio creado (201)', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{zonas_url}}/api/espacios", "host": ["{{zonas_url}}"], "path": ["api", "espacios"] },
+            "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Espacio A1\",\n  \"tipo\": \"AUTO\",\n  \"idZona\": \"{{zonaId}}\"\n}" },
+            "description": "El nombre/codigo se autogeneran a partir del codigo de la zona (p.ej. ZON-NOR-01)."
+          }
+        },
+        {
+          "name": "Listar espacios (publico)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{zonas_url}}/api/espacios", "host": ["{{zonas_url}}"], "path": ["api", "espacios"] }
+          }
+        },
+        {
+          "name": "Obtener espacio por id (publico)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{zonas_url}}/api/espacios/{{espacioId}}", "host": ["{{zonas_url}}"], "path": ["api", "espacios", "{{espacioId}}"] }
+          }
+        },
+        {
+          "name": "Reservar espacio (PATCH, ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "url": { "raw": "{{zonas_url}}/api/espacios/{{espacioId}}/reservar", "host": ["{{zonas_url}}"], "path": ["api", "espacios", "{{espacioId}}", "reservar"] }
+          }
+        },
+        {
+          "name": "Liberar espacio (PATCH, ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "url": { "raw": "{{zonas_url}}/api/espacios/{{espacioId}}/liberar", "host": ["{{zonas_url}}"], "path": ["api", "espacios", "{{espacioId}}", "liberar"] }
+          }
+        },
+        {
+          "name": "Cambiar estado a OCUPADO (PATCH, ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "url": { "raw": "{{zonas_url}}/api/espacios/{{espacioId}}/estado/OCUPADO", "host": ["{{zonas_url}}"], "path": ["api", "espacios", "{{espacioId}}", "estado", "OCUPADO"] },
+            "description": "Estados validos: DISPONIBLE, OCUPADO, RESERVADO."
+          }
+        },
+        {
+          "name": "Espacios por estado (publico)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{zonas_url}}/api/espacios/estado/DISPONIBLE", "host": ["{{zonas_url}}"], "path": ["api", "espacios", "estado", "DISPONIBLE"] }
+          }
+        },
+        {
+          "name": "Deshabilitar espacio (DELETE, ADMIN)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{zonas_url}}/api/espacios/{{espacioId}}", "host": ["{{zonas_url}}"], "path": ["api", "espacios", "{{espacioId}}"] }
+          }
+        },
+        {
+          "name": "Stream SSE espacios (GET, publico)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "text/event-stream" }],
+            "url": { "raw": "{{zonas_url}}/api/espacios/sse", "host": ["{{zonas_url}}"], "path": ["api", "espacios", "sse"] },
+            "description": "Postman muestra el stream en crudo. Emite el evento INIT y luego 'espacio_cambiado' cada vez que un espacio cambia de estado."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vehiculos",
+      "item": [
+        {
+          "name": "Crear vehiculo Auto (ADMIN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('vehiculoId', json.id);",
+                  "pm.test('vehiculo creado (201)', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{vehiculos_url}}/vehiculos", "host": ["{{vehiculos_url}}"], "path": ["vehiculos"] },
+            "body": { "mode": "raw", "raw": "{\n  \"tipo\": \"Auto\",\n  \"datos\": {\n    \"marca\": \"Toyota\",\n    \"placa\": \"ABC-1234\",\n    \"modelo\": \"Corolla\",\n    \"color\": \"Rojo\",\n    \"anio\": 2020,\n    \"numeroPuertas\": 4,\n    \"capacidadMaletero\": 5\n  }\n}" }
+          }
+        },
+        {
+          "name": "Crear vehiculo Motocicleta (ADMIN)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{vehiculos_url}}/vehiculos", "host": ["{{vehiculos_url}}"], "path": ["vehiculos"] },
+            "body": { "mode": "raw", "raw": "{\n  \"tipo\": \"Motocicleta\",\n  \"datos\": {\n    \"marca\": \"Yamaha\",\n    \"placa\": \"AB-123C\",\n    \"modelo\": \"FZ150\",\n    \"color\": \"Azul\",\n    \"anio\": 2021,\n    \"tipo\": \"DEPORTIVA\"\n  }\n}" }
+          }
+        },
+        {
+          "name": "Listar vehiculos",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{vehiculos_url}}/vehiculos", "host": ["{{vehiculos_url}}"], "path": ["vehiculos"] }
+          }
+        },
+        {
+          "name": "Buscar vehiculo por placa",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{vehiculos_url}}/vehiculos/placa/ABC-1234", "host": ["{{vehiculos_url}}"], "path": ["vehiculos", "placa", "ABC-1234"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tickets",
+      "item": [
+        {
+          "name": "Crear ticket (ADMIN)  [ver nota]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('ticketId', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{tickets_url}}/tickets", "host": ["{{tickets_url}}"], "path": ["tickets"] },
+            "body": { "mode": "raw", "raw": "{\n  \"placa\": \"ABC-1234\",\n  \"dni\": \"9999999999\",\n  \"idEspacio\": \"{{espacioId}}\",\n  \"nombreZona\": \"Zona Norte\"\n}" },
+            "description": "PREREQUISITOS (crear ticket llama a otros servicios):\n- Debe existir la persona con ese dni en ms-usuarios (el admin sembrado usa dni 9999999999).\n- Debe existir el vehiculo con esa placa en ms-vehiculos (ver Vehiculos > Crear).\n- El espacio {{espacioId}} debe estar DISPONIBLE y pertenecer a la zona indicada.\n\nNOTA: hoy las llamadas internas de ms-tickets NO envian token y sus URLs entre servicios apuntan por defecto a localhost:8080, por lo que este request puede fallar hasta cablear la comunicacion entre servicios (ver el mensaje del asistente)."
+          }
+        },
+        {
+          "name": "Listar tickets",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{tickets_url}}/tickets", "host": ["{{tickets_url}}"], "path": ["tickets"] }
+          }
+        },
+        {
+          "name": "Tickets activos",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{tickets_url}}/tickets/activos", "host": ["{{tickets_url}}"], "path": ["tickets", "activos"] }
+          }
+        },
+        {
+          "name": "Cerrar ticket (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{tickets_url}}/tickets/{{ticketId}}", "host": ["{{tickets_url}}"], "path": ["tickets", "{{ticketId}}"] },
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        },
+        {
+          "name": "Stream SSE tickets (GET, publico)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "text/event-stream" }],
+            "url": { "raw": "{{tickets_url}}/ticket-events/eventos?tenant_id={{tenant_id}}", "host": ["{{tickets_url}}"], "path": ["ticket-events", "eventos"], "query": [{ "key": "tenant_id", "value": "{{tenant_id}}" }] },
+            "description": "Emite un mensaje cada vez que se crea o cierra un ticket."
+          }
+        }
+      ]
+    }
+  ]
+}

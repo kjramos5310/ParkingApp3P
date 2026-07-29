@@ -1,0 +1,109 @@
+# MS-Auditoria (NestJS): registro centralizado de eventos.
+# Consume la cola audit_queue de RabbitMQ y expone el historial por tenant.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms-audith
+  namespace: parqueadero
+  labels:
+    app: ms-audith
+    tier: backend
+spec:
+  # Varias replicas consumen de la misma cola en competing-consumers: RabbitMQ
+  # entrega cada mensaje a un unico consumidor, por lo que no hay duplicados.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ms-audith
+  template:
+    metadata:
+      labels:
+        app: ms-audith
+        tier: backend
+    spec:
+      containers:
+        - name: ms-audith
+          image: parkingapp/ms-audith:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3004
+          env:
+            - name: PORT
+              value: "3004"
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: db_audit
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: JWT_SECRET
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_PASSWORD
+          envFrom:
+            - configMapRef:
+                name: parking-config
+          # timeoutSeconds es obligatorio ponerlo: el valor por defecto es 1s y
+          # bajo carga el sondeo expira antes de que el proceso conteste. El
+          # kubelet mataba entonces el contenedor (SIGKILL, exit 137) y el
+          # servicio entraba en CrashLoopBackOff aunque estuviera sano.
+          startupProbe:
+            tcpSocket:
+              port: 3004
+            failureThreshold: 60
+            periodSeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 3004
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 3004
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms-audith
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: ms-audith
+  ports:
+    - port: 3004
+      targetPort: 3004

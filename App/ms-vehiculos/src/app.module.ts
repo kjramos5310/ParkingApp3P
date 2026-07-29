@@ -1,13 +1,31 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
-import { databaseConfig } from './vehiculos/config/database.config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { VehiculosModule } from './vehiculos/vehiculos.module';
+import { Vehiculo } from './vehiculos/entities/vehiculo.entity';
+import { Auto } from './vehiculos/entities/auto.entity';
+import { Motocicleta } from './vehiculos/entities/motocicleta.entity';
+import { Camioneta } from './vehiculos/entities/camioneta.entity';
+import { AuditOutbox } from './common/entities/audit-outbox.entity';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    TypeOrmModule.forRoot(databaseConfig),
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get<string>('DB_HOST') || '127.0.0.1',
+        port: +config.get('DB_PORT') || 5432,
+        username: config.get<string>('DB_USUARIO') || 'postgres',
+        password: config.get<string>('DB_CONTRASENA') || 'postgres',
+        database: config.get<string>('DB_NOMBRE') || 'vehiculos_db',
+        entities: [Vehiculo, Auto, Motocicleta, Camioneta, AuditOutbox],
+        synchronize: true,
+        logging: true,
+      }),
+      inject: [ConfigService],
+    }),
     VehiculosModule,
   ],
 })

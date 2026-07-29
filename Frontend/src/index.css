@@ -1,0 +1,141 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   Sistema visual: senaletica de parqueadero.
+   La consola reutiliza los codigos que el operador ya lee en la rampa:
+   hormigon, lineas de bahia pintadas, ambar de senalizacion y los pilotos
+   LED verde / rojo / azul que cuelgan sobre cada plaza.
+   ========================================================================== */
+@theme {
+  /* Hormigon */
+  --color-deck: #e3e3df;
+  --color-deck-raised: #f6f6f3;
+  --color-deck-sunken: #d6d6d1;
+  --color-line: #c4c4be;
+  --color-line-strong: #a9a9a2;
+
+  /* Tinta estarcida */
+  --color-ink: #16181c;
+  --color-ink-muted: #5c6068;
+  --color-ink-faint: #8a8e96;
+
+  /* Panel de senalizacion (banda oscura del ingreso) */
+  --color-board: #1a1c21;
+  --color-board-raised: #262930;
+
+  /* Ambar de senalizacion: acento de accion */
+  --color-hivis: #ffb200;
+  --color-hivis-deep: #c98a00;
+
+  /* Pilotos LED de bahia */
+  --color-led-free: #0b8f5a;
+  --color-led-taken: #d93025;
+  --color-led-held: #1a6fd4;
+
+  /* Tipografia */
+  --font-sign: 'Oswald', 'Arial Narrow', system-ui, sans-serif;
+  --font-body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-data: 'IBM Plex Mono', ui-monospace, 'Courier New', monospace;
+
+  --radius-bay: 3px;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-deck);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.55;
+    /* Grano de hormigon: ruido muy leve para que el fondo no lea como gris plano */
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      rgb(0 0 0 / 0.035) 1px,
+      transparent 0
+    );
+    background-size: 4px 4px;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-hivis);
+    outline-offset: 2px;
+  }
+
+  /* La senaletica se lee en mayuscula y condensada */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-sign);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+}
+
+@layer components {
+  /* Etiqueta estarcida sobre el piso: encabezados de seccion y de columna */
+  .eyebrow {
+    font-family: var(--font-sign);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+  }
+
+  /* Placa vehicular: el artefacto mas reconocible del dominio */
+  .plate {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--font-data);
+    font-weight: 600;
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    background: #fff;
+    color: var(--color-ink);
+    border: 2px solid var(--color-ink);
+    border-radius: 3px;
+    padding: 0.05rem 0.4rem;
+    white-space: nowrap;
+  }
+}
+
+/* El destello de una bahia al llegar un evento SSE: confirma que el dato es
+   nuevo sin obligar al operador a comparar la pantalla contra su memoria. */
+@keyframes bay-flash {
+  0% {
+    box-shadow: 0 0 0 0 var(--color-hivis);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+.bay-flash {
+  animation: bay-flash 900ms ease-out;
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.live-pulse {
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bay-flash,
+  .live-pulse {
+    animation: none;
+  }
+}

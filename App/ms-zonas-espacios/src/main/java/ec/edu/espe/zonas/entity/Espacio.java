@@ -10,7 +10,10 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name="espacios")
+@Table(name="espacios", uniqueConstraints = {
+        @UniqueConstraint(name="uk_espacio_tenant_nombre", columnNames={"tenant_id", "nombre"}),
+        @UniqueConstraint(name="uk_espacio_tenant_codigo", columnNames={"tenant_id", "codigo"})
+})
 @Data
 @Builder
 @NoArgsConstructor
@@ -21,10 +24,13 @@ public class Espacio {
     @GeneratedValue(strategy= GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable=false, unique=true)
+    @Column(name="tenant_id", length=50, updatable=false)
+    private String tenantId;
+
+    @Column(nullable=false)
     private String nombre;
 
-    @Column(nullable=false, unique=true, length = 30)
+    @Column(nullable=false, length = 30)
     private String codigo; //ZON-VIP-01 ZON-REG-01
 
     @Column(nullable=true)

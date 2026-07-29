@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryGeneratedColumn, TableInheritance } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn, TableInheritance } from 'typeorm';
 
 export enum Clasificacion {
     ELECTRICO = 'ELECTRICO',
@@ -10,12 +10,16 @@ export enum Clasificacion {
 
 
 @Entity()
+@Index('uk_vehiculo_tenant_placa', ['tenantId', 'placa'], { unique: true })
 @TableInheritance({ column: { name: 'tipo', type: 'varchar' } })
 export abstract class Vehiculo {
     @PrimaryGeneratedColumn('uuid')
     id!: string;
 
-    @Column({ unique: true })
+    @Column({ name: 'tenant_id', length: 50, default: 'empresa-a' })
+    tenantId!: string;
+
+    @Column()
     placa!: string;
 
     @Column()
@@ -26,6 +30,9 @@ export abstract class Vehiculo {
 
     @Column()
     color!: string;
+
+    @Column()
+    anio!: number;
 
     @Column({ nullable: true })
     clasificacion?: string;

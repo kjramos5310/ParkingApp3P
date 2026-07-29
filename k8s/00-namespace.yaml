@@ -1,0 +1,8 @@
+# Namespace unico que aisla todos los recursos del sistema de parqueaderos.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: parqueadero
+  labels:
+    name: parqueadero
+    app.kubernetes.io/part-of: parking-saas

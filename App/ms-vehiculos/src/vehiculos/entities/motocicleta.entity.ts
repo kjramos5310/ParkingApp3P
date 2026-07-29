@@ -19,10 +19,10 @@ export class Motocicleta extends Vehiculo {
     @Column()
     tipoManubrio!: string;
 
-    @Column()
-    tipo!: TipoMotocicleta;
+    @Column({ name: 'tipo_motocicleta' })
+    tipoMotocicleta!: TipoMotocicleta;
 
     obtenerTipo(): string {
-        return 'Moto';
+        return 'Motocicleta';
     }
 }

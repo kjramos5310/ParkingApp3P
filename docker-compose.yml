@@ -1,128 +1,313 @@
-version: '3.8'
-
 services:
-  # Base de Datos PostgreSQL (para usuarios, tickets, etc.)
-  postgres-db:
+  # ---------------- Infraestructura ----------------
+
+  # PostgreSQL: una BD por microservicio (usuarios, vehiculos, tickets, audith)
+  postgres:
     image: postgres:15-alpine
     container_name: parking-postgres
     environment:
-      POSTGRES_DB: parking_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin_password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./App/db/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - parking-network
 
-  # Base de Datos MySQL/MariaDB (si se requiere para vehiculos/eventos)
-  mysql-db:
+  # MySQL: BD de zonas-espacios
+  mysql:
     image: mysql:8.0
     container_name: parking-mysql
     environment:
-      MYSQL_DATABASE: parking_events
-      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: db_zonas_espacios
+      MYSQL_USER: espe_user
+      MYSQL_PASSWORD: espe_password
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - parking-network
 
-  # API Gateway (Kong)
+  # Redis: cache de validaciones de persona/vehiculo en ms-tickets
+  redis:
+    image: redis:7-alpine
+    container_name: redis-ticket
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - parking-network
+
+  # Redis: cache de la lista de espacios en ms-zonas
+  redis-zonas:
+    image: redis:7-alpine
+    container_name: redis-zonas
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - parking-network
+
+  # RabbitMQ: bus de auditoria (publicador ms-usuarios -> consumidor ms-audith)
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: parking-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - parking-network
+
+  # API Gateway: punto de entrada unico para clientes y para Kubernetes.
   kong:
-    image: kong:3.4
-    container_name: parking-kong
+    image: kong:3.7
+    container_name: parking-api-gateway
     environment:
       KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yml
-      KONG_PROXY_ACCESS_LOG: /dev/stdout
-      KONG_ADMIN_ACCESS_LOG: /dev/stdout
-      KONG_PROXY_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl http2"
-      KONG_ADMIN_LISTEN: "0.0.0.0:8001, 0.0.0.0:8444 ssl http2"
+      KONG_DECLARATIVE_CONFIG: /tmp/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      # Lo consume el entrypoint para sustituir __JWT_SECRET__ en la
+      # configuracion declarativa antes de arrancar Kong.
+      JWT_SECRET: ${JWT_SECRET:-9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6}
     volumes:
-      - ./App/kong.yml:/usr/local/kong/declarative/kong.yml
+      - ./kong-config/kong.yml:/kong/declarative/kong.template.yml:ro
+    # Sustituye __JWT_SECRET__ por el valor real antes de arrancar Kong: el
+    # campo secret de jwt_secrets no admite referencias a vault, y asi el
+    # secreto no queda escrito en kong-config/kong.yml.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sed "s|__JWT_SECRET__|$${JWT_SECRET}|g"           /kong/declarative/kong.template.yml > /tmp/kong.yml
+        exec /docker-entrypoint.sh kong docker-start
     ports:
-      - "8000:8000"  # Puerto del Proxy (Tráfico de entrada externo)
-      - "8001:8001"  # Puerto de Administración (Solo local)
+      - "8000:8000"
+      - "8001:8001"
     networks:
       - parking-network
-    depends_on:
-      - postgres-db
-      - mysql-db
 
-  # Microservicio: ms-usuarios-roles-auth (Java Spring Boot)
-  ms-usuarios-roles-auth:
+  # ---------------- Microservicios ----------------
+
+  # ms-usuarios-roles-auth (Spring Boot) -> Postgres + RabbitMQ
+  ms-usuarios:
     build:
       context: ./App/ms-usuarios-roles-auth
-      dockerfile: Dockerfile
     container_name: ms-usuarios
-    ports:
-      - "8081:8081"
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/parking_db
-      - SPRING_DATASOURCE_USERNAME=admin
-      - SPRING_DATASOURCE_PASSWORD=admin_password
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/usuarios_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+      JWT_SECRET: ${JWT_SECRET:-9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6}
+      APP_TENANTS: ${APP_TENANTS:-empresa-a,empresa-b}
+      COOKIE_SECURE: "false"
+    ports:
+      - "8080:8080"
     depends_on:
-      - postgres-db
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - parking-network
 
-  # Microservicio: ms-zonas-espacios (Java Spring Boot)
-  ms-zonas-espacios:
+  # ms-zonas-espacios (Spring Boot) -> MySQL
+  ms-zonas:
     build:
       context: ./App/ms-zonas-espacios
-      dockerfile: Dockerfile
     container_name: ms-zonas
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/db_zonas_espacios?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+      SPRING_DATASOURCE_USERNAME: espe_user
+      SPRING_DATASOURCE_PASSWORD: espe_password
+      # Cache Redis (lista de espacios)
+      REDIS_HOST: redis-zonas
+      REDIS_PORT: 6379
+      REDIS_TTL: 60
+      # Publicacion de eventos de dominio hacia ms-audith
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+      RABBITMQ_EXCHANGE: audit_exchange
+      RABBITMQ_ROUTING_KEY: audit_routing_key
+      JWT_SECRET: ${JWT_SECRET:-9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6}
+      APP_TENANTS: ${APP_TENANTS:-empresa-a,empresa-b}
     ports:
       - "8082:8082"
-    environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/parking_db
-      - SPRING_DATASOURCE_USERNAME=admin
-      - SPRING_DATASOURCE_PASSWORD=admin_password
     depends_on:
-      - postgres-db
+      mysql:
+        condition: service_healthy
+      redis-zonas:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - parking-network
 
-  # Microservicio: ms-vehiculos (NestJS)
+  # ms-vehiculos (NestJS) -> Postgres
   ms-vehiculos:
     build:
       context: ./App/ms-vehiculos
-      dockerfile: Dockerfile
     container_name: ms-vehiculos
+    environment:
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USUARIO: postgres
+      DB_CONTRASENA: postgres
+      DB_NOMBRE: vehiculos_db
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+      RABBITMQ_EXCHANGE: audit_exchange
+      RABBITMQ_ROUTING_KEY: audit_routing_key
+      JWT_SECRET: ${JWT_SECRET:-9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6}
     ports:
       - "3001:3000"
-    environment:
-      - DATABASE_HOST=mysql-db
-      - DATABASE_PORT=3306
-      - DATABASE_USER=root
-      - DATABASE_PASSWORD=root_password
-      - DATABASE_NAME=parking_events
     depends_on:
-      - mysql-db
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - parking-network
 
-  # Microservicio: ms-tickets (NestJS)
+  # ms-tickets (NestJS) -> Postgres
   ms-tickets:
     build:
       context: ./App/ms-tickets
-      dockerfile: Dockerfile
     container_name: ms-tickets
+    environment:
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USUARIO: postgres
+      DB_CONTRASENA: postgres
+      DB_NOMBRE: tickets_db
+      # Comunicacion entre servicios (por nombre de servicio en la red de compose)
+      MS_PERSONAS: http://ms-usuarios:8080/api/personas
+      MS_ESPACIOS: http://ms-zonas:8082/api/espacios
+      MS_VEHICULOS: http://ms-vehiculos:3000/vehiculos/placa
+      MS_AUTH_LOGIN: http://ms-usuarios:8080/api/auth/login
+      SERVICE_USER: admin
+      SERVICE_PASSWORD: admin123
+      TARIFA_HORA: "1.0"
+      # Cache Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_TTL: 60
+      # Publicacion de eventos de auditoria hacia ms-audith
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+      RABBITMQ_EXCHANGE: audit_exchange
+      RABBITMQ_ROUTING_KEY: audit_routing_key
+      JWT_SECRET: ${JWT_SECRET:-9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6}
     ports:
       - "3002:3000"
-    environment:
-      - DATABASE_HOST=postgres-db
-      - DATABASE_PORT=5432
-      - DATABASE_USER=admin
-      - DATABASE_PASSWORD=admin_password
-      - DATABASE_NAME=parking_db
     depends_on:
-      - postgres-db
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      ms-usuarios:
+        condition: service_started
+      ms-zonas:
+        condition: service_started
+      ms-vehiculos:
+        condition: service_started
+    networks:
+      - parking-network
+
+  # ms-audith (NestJS) -> Postgres + RabbitMQ
+  ms-audith:
+    build:
+      context: ./App/ms-audith
+    container_name: ms-audith
+    environment:
+      PORT: 3004
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: db_audit
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+      RABBITMQ_QUEUE: audit_queue
+      RABBITMQ_EXCHANGE: audit_exchange
+      RABBITMQ_ROUTING_KEY: audit_routing_key
+      THROTTLE_TTL: 60000
+      THROTTLE_LIMIT: 100
+      JWT_SECRET: ${JWT_SECRET:-9a7f34c2d6e9f1a0b3c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6}
+    ports:
+      - "3004:3004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - parking-network
+
+  # ---------------- Frontend ----------------
+
+  # SPA de React servida por nginx. El navegador llama siempre a /api del
+  # mismo origen; en compose ese enrutado lo hace nginx hacia Kong, igual que
+  # el Ingress en Kubernetes.
+  frontend:
+    build:
+      context: ./Frontend
+    container_name: parking-frontend
+    environment:
+      KONG_UPSTREAM: kong:8000
+    ports:
+      - "5500:80"
+    depends_on:
+      - kong
     networks:
       - parking-network
 
@@ -133,3 +318,4 @@ networks:
 volumes:
   postgres_data:
   mysql_data:
+  rabbitmq_data:

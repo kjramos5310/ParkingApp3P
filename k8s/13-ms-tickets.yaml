@@ -1,0 +1,125 @@
+# MS-Tickets (NestJS): entrada, salida y cobro de vehiculos.
+# Se integra por HTTP con ms-usuarios, ms-zonas y ms-vehiculos, cachea las
+# validaciones en redis-tickets y publica eventos de dominio a RabbitMQ.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms-tickets
+  namespace: parqueadero
+  labels:
+    app: ms-tickets
+    tier: backend
+spec:
+  # Igual que ms-zonas: el stream SSE de tickets vive en memoria del pod.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ms-tickets
+  template:
+    metadata:
+      labels:
+        app: ms-tickets
+        tier: backend
+    spec:
+      containers:
+        - name: ms-tickets
+          image: parkingapp/ms-tickets:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NOMBRE
+              value: tickets_db
+            - name: DB_USUARIO
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_USER
+            - name: DB_CONTRASENA
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: POSTGRES_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: JWT_SECRET
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: RABBITMQ_PASSWORD
+            - name: SERVICE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: SERVICE_USER
+            - name: SERVICE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-secrets
+                  key: SERVICE_PASSWORD
+            - name: REDIS_HOST
+              value: redis-tickets
+            - name: REDIS_PORT
+              value: "6379"
+          envFrom:
+            - configMapRef:
+                name: parking-config
+            - configMapRef:
+                name: parking-endpoints
+          # timeoutSeconds es obligatorio ponerlo: el valor por defecto es 1s y
+          # bajo carga el sondeo expira antes de que el proceso conteste. El
+          # kubelet mataba entonces el contenedor (SIGKILL, exit 137) y el
+          # servicio entraba en CrashLoopBackOff aunque estuviera sano.
+          startupProbe:
+            tcpSocket:
+              port: 3000
+            failureThreshold: 60
+            periodSeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms-tickets
+  namespace: parqueadero
+spec:
+  type: ClusterIP
+  selector:
+    app: ms-tickets
+  ports:
+    - port: 3000
+      targetPort: 3000
