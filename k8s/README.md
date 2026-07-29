@@ -37,11 +37,25 @@ El script arranca minikube, habilita `ingress` y `metrics-server`, construye las
 seis imagenes **dentro del daemon Docker de minikube**, regenera el ConfigMap de
 Kong y aplica todos los manifiestos.
 
-Al terminar, agrega la IP que imprime a tu archivo `hosts`:
+Al terminar, agrega la direccion que imprime a tu archivo `hosts`.
+
+En Windows con el driver Docker, deja este comando ejecutandose en otra
+PowerShell como administrador:
+
+```powershell
+minikube tunnel
+```
+
+En ese caso la entrada de `hosts` es:
 
 ```
-<minikube-ip>  parqueadero.espe.edu.ec
+127.0.0.1  parqueadero.espe.edu.ec
 ```
+
+La aplicacion local queda disponible en
+`http://parqueadero.espe.edu.ec`. Otros drivers y sistemas pueden exponer el
+Ingress directamente en la IP de `minikube ip`; el script muestra la entrada
+adecuada.
 
 ## Despliegue manual
 
@@ -78,15 +92,17 @@ kubectl -n parqueadero create secret tls parqueadero-tls \
   --cert=tls.crt --key=tls.key
 ```
 
-En produccion, instala cert-manager y descomenta la anotacion
-`cert-manager.io/cluster-issuer` en `30-ingress.yaml`.
+En produccion, instala cert-manager, descomenta la anotacion
+`cert-manager.io/cluster-issuer` y cambia
+`nginx.ingress.kubernetes.io/ssl-redirect` a `"true"` en `30-ingress.yaml`.
 
-Si aun no tienes certificado, pon `nginx.ingress.kubernetes.io/ssl-redirect: "false"`
-para poder entrar por HTTP mientras tanto.
+Sin el Secret, el despliegue local conserva
+`nginx.ingress.kubernetes.io/ssl-redirect: "false"` para permitir el acceso por
+HTTP.
 
 ## Configuracion de Kong
 
-`App/kong.yml` es la **unica fuente de verdad**. `07-kong-config.yaml` se genera
+`kong-config/kong.yml` es la **unica fuente de verdad**. `07-kong-config.yaml` se genera
 a partir de el; no lo edites a mano:
 
 ```bash

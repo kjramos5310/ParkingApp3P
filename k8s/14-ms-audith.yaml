@@ -25,7 +25,7 @@ spec:
       containers:
         - name: ms-audith
           image: parkingapp/ms-audith:latest
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3004
           env:

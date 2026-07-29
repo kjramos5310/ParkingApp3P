@@ -31,6 +31,9 @@ export abstract class Vehiculo {
     @Column()
     color!: string;
 
+    @Column()
+    anio!: number;
+
     @Column({ nullable: true })
     clasificacion?: string;
 

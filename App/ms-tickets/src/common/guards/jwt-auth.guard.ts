@@ -1,4 +1,5 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
 
 @Injectable()
@@ -25,7 +26,7 @@ export class JwtAuthGuard implements CanActivate {
     try {
       const payload = jwt.verify(token, this.jwtSecret) as any;
       if (payload.tenant_id !== tenantId) {
-        throw new UnauthorizedException('El token pertenece a otra empresa');
+        throw new ForbiddenException('El token pertenece a otra empresa');
       }
       request.user = payload;
 
@@ -42,11 +43,12 @@ export class JwtAuthGuard implements CanActivate {
         (role) => role.toUpperCase() === 'ROLE_ADMIN' || role.toUpperCase() === 'ADMIN'
       );
       if (!hasAdmin) {
-        throw new UnauthorizedException('No tiene permisos para realizar esta operación');
+        throw new ForbiddenException('No tiene permisos para realizar esta operación');
       }
 
       return true;
     } catch (err) {
+      if (err instanceof ForbiddenException) throw err;
       throw new UnauthorizedException('Token inválido o expirado');
     }
   }

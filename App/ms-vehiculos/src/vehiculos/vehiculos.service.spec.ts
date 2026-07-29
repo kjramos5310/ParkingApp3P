@@ -15,6 +15,7 @@ describe('VehiculosService', () => {
       find: jest.fn(),
       findOne: jest.fn(),
       save: jest.fn(),
+      remove: jest.fn(),
     };
     publicador = { publishAuditEvent: jest.fn().mockResolvedValue(undefined) };
 
@@ -60,7 +61,7 @@ describe('VehiculosService', () => {
     it('rechaza una placa ya registrada en el mismo tenant', async () => {
       (repositorio.findOne as jest.Mock).mockResolvedValue({ id: 'existente' });
 
-      await expect(service.create('empresa-a', dto)).rejects.toThrow('ABC-1234');
+      await expect(service.create('empresa-a', dto)).rejects.toThrow('La placa ya está registrada en este tenant');
       expect(repositorio.save).not.toHaveBeenCalled();
     });
 
@@ -79,6 +80,47 @@ describe('VehiculosService', () => {
           tenant_id: 'empresa-a',
           entidad: 'vehiculo',
         }),
+      );
+    });
+  });
+
+  describe('CRUD multitenant', () => {
+    const existente = {
+      id: 'veh-1',
+      tenantId: 'empresa-a',
+      placa: 'ABC-1234',
+      marca: 'Toyota',
+      modelo: 'Corolla',
+      color: 'Blanco',
+    } as any;
+
+    it('actualiza dentro del tenant y publica auditoria', async () => {
+      (repositorio.findOne as jest.Mock)
+        .mockResolvedValueOnce(existente)
+        .mockResolvedValueOnce(null);
+      (repositorio.save as jest.Mock).mockImplementation(async (vehiculo) => vehiculo);
+
+      const actualizado = await service.update('empresa-a', 'veh-1', {
+        datos: { ...existente, placa: 'DEF-5678', color: 'Negro' },
+      } as any);
+
+      expect(actualizado.placa).toBe('DEF-5678');
+      expect(repositorio.findOne).toHaveBeenCalledWith({
+        where: { tenantId: 'empresa-a', id: 'veh-1' },
+      });
+      expect(publicador.publishAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ accion: 'update', tenant_id: 'empresa-a' }),
+      );
+    });
+
+    it('elimina unicamente el vehiculo del tenant y audita', async () => {
+      (repositorio.findOne as jest.Mock).mockResolvedValue({ ...existente });
+
+      await service.remove('empresa-a', 'veh-1');
+
+      expect(repositorio.remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'veh-1' }));
+      expect(publicador.publishAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ accion: 'delete', tenant_id: 'empresa-a' }),
       );
     });
   });

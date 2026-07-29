@@ -11,6 +11,7 @@ metadata:
     tier: backend
 spec:
   replicas: 2
+  progressDeadlineSeconds: 1200
   selector:
     matchLabels:
       app: ms-usuarios
@@ -23,10 +24,12 @@ spec:
       containers:
         - name: ms-usuarios
           image: parkingapp/ms-usuarios:latest
-          imagePullPolicy: Never # imagen construida localmente (minikube/kind)
+          imagePullPolicy: IfNotPresent # usa imagen local en minikube y GHCR en despliegues remotos
           ports:
             - containerPort: 8080
           env:
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: 'true'
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/usuarios_db
             - name: SPRING_DATASOURCE_USERNAME
@@ -61,18 +64,18 @@ spec:
                 name: parking-config
           startupProbe:
             httpGet:
-              path: /actuator/health
+              path: /actuator/health/liveness
               port: 8080
-            failureThreshold: 30
-            periodSeconds: 10 # tolera hasta 5 min de arranque de la JVM
+            failureThreshold: 90
+            periodSeconds: 10 # tolera hasta 15 min de arranque de la JVM
           readinessProbe:
             httpGet:
-              path: /actuator/health
+              path: /actuator/health/readiness
               port: 8080
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /actuator/health
+              path: /actuator/health/liveness
               port: 8080
             periodSeconds: 20
           resources:

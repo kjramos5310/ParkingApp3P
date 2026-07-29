@@ -58,6 +58,7 @@ export const COLOR_ESTADO: Record<EstadoEspacio, string> = {
   DISPONIBLE: 'var(--color-led-free)',
   OCUPADO: 'var(--color-led-taken)',
   RESERVADO: 'var(--color-led-held)',
+  MANTENIMIENTO: '#6b7280',
 };
 
 /** Piloto LED: el mismo codigo de color que cuelga sobre cada bahia real. */

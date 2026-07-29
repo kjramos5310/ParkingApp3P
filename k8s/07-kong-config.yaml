@@ -1,6 +1,6 @@
 # =============================================================================
 # ARCHIVO GENERADO - NO EDITAR A MANO
-# Fuente: App/kong.yml   |   Regenerar: python k8s/sync-kong-config.py
+# Fuente: kong-config/kong.yml   |   Regenerar: python k8s/sync-kong-config.py
 # =============================================================================
 apiVersion: v1
 kind: ConfigMap
@@ -134,6 +134,19 @@ data:
               limit_by: ip
               fault_tolerant: true
               hide_client_headers: false
+
+      # ---------------------------------------------------------------------------
+      # PUBLICO: gestion de tenants / empresas (SuperAdmin).
+      # ---------------------------------------------------------------------------
+      - name: tenants-service
+        host: usuarios-upstream
+        port: 8080
+        protocol: http
+        routes:
+          - name: tenants-route
+            paths:
+              - /api/tenants
+            strip_path: false
 
       # ---------------------------------------------------------------------------
       # PROTEGIDO: gestion de usuarios, personas y roles.
@@ -319,6 +332,55 @@ data:
           max_age: 3600
           credentials: true
 
+      # Aislamiento multitenant en el borde. Se ejecuta despues del plugin JWT:
+      # deriva X-Tenant-ID del claim firmado y rechaza cualquier discrepancia.
+      - name: post-function
+        config:
+          access:
+            - |
+              local authorization = kong.request.get_header("authorization")
+              local token = nil
+
+              if authorization then
+                token = authorization:match("^[Bb]earer%s+(.+)$")
+              end
+              if not token then
+                token = kong.request.get_query_arg("jwt")
+              end
+
+              -- Las rutas publicas (login y aprovisionamiento) no llevan JWT.
+              if not token then
+                return
+              end
+
+              local encoded_payload = token:match("^[^.]+%.([^.]+)%.[^.]+$")
+              if not encoded_payload then
+                return kong.response.exit(401, { message = "Token JWT invalido" })
+              end
+
+              encoded_payload = encoded_payload:gsub("-", "+"):gsub("_", "/")
+              local remainder = #encoded_payload % 4
+              if remainder > 0 then
+                encoded_payload = encoded_payload .. string.rep("=", 4 - remainder)
+              end
+
+              local decoded = ngx.decode_base64(encoded_payload)
+              local claims = decoded and require("cjson.safe").decode(decoded) or nil
+              local token_tenant = claims and claims.tenant_id or nil
+              if not token_tenant or token_tenant == "" then
+                return kong.response.exit(403, { message = "El token no contiene tenant_id" })
+              end
+
+              token_tenant = string.lower(token_tenant)
+              local requested_tenant = kong.request.get_header("x-tenant-id")
+                  or kong.request.get_query_arg("tenant_id")
+
+              if requested_tenant and string.lower(requested_tenant) ~= token_tenant then
+                return kong.response.exit(403, { message = "El tenant solicitado no coincide con el token" })
+              end
+
+              kong.service.request.set_header("X-Tenant-ID", token_tenant)
+
       # Rate limiting general de la plataforma. En modo DB-less el contador es
       # local a cada nodo de Kong (policy: local).
       - name: rate-limiting
@@ -337,3 +399,10 @@ data:
           header_name: X-Correlation-ID
           generator: uuid
           echo_downstream: true
+
+      # Logging estructurado de cada solicitud en stdout. Kubernetes y Docker
+      # recolectan este flujo sin necesitar un volumen compartido.
+      - name: file-log
+        config:
+          path: /dev/stdout
+          reopen: true

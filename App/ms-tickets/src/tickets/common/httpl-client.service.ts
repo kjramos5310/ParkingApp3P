@@ -36,7 +36,11 @@ export class HttpClientService {
             response = await doPost(await this.authHeader(tenantId, true));
         }
         if (!response.ok) {
-            throw new Error(`POST ${url} failed: ${response.statusText}`);
+            const detalle = await response.text();
+            const error: any = new Error(`POST ${url} failed: ${response.status} ${detalle || response.statusText}`);
+            error.status = response.status;
+            error.body = detalle;
+            throw error;
         }
         return response.json() as Promise<T>;
     }
@@ -54,7 +58,11 @@ export class HttpClientService {
         }
         if (!response.ok) {
             this.logger.error(`PATCH ${url} failed: ${response.status} ${response.statusText}`);
-            throw new Error(`PATCH ${url} failed: ${response.statusText}`);
+            const detalle = await response.text();
+            const error: any = new Error(`PATCH ${url} failed: ${response.status} ${detalle || response.statusText}`);
+            error.status = response.status;
+            error.body = detalle;
+            throw error;
         }
         const text = await response.text();
         try {

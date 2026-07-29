@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { Repository } from 'typeorm';
@@ -47,7 +47,7 @@ export class TicketsService {
 
     // 3 buscar espacio disponible
     const espacio = await this.buscarEspacioDisponible(tenantId, createTicketDto.idEspacio, createTicketDto.nombreZona);
-    if (!espacio) throw new BadRequestException('Espacio no encontrado o no disponible');
+    if (!espacio) throw new ConflictException('Espacio no disponible');
 
     // REGLA DE NEGOCIO: Compatibilidad de tipo de vehiculo con tipo de espacio
     const tipoVehiculo = (vehiculo as any).tipo?.toLowerCase() || '';
@@ -63,11 +63,11 @@ export class TicketsService {
     // 4 validar que no tenga tickets activos (por placa y por DNI)
     const tieneTicketActivo = await this.validarTicketActivo(tenantId, createTicketDto.placa);
     if (tieneTicketActivo) {
-      throw new BadRequestException('El vehiculo ya tiene un ticket activo');
+      throw new ConflictException('El vehículo ya posee un ticket activo');
     }
     const tienePersonaTicketActivo = await this.validarPersonaTicketActivo(tenantId, createTicketDto.dni);
     if (tienePersonaTicketActivo) {
-      throw new BadRequestException('La persona ya tiene un ticket activo');
+      throw new ConflictException('La persona ya posee un ticket activo');
     }
 
     // 5 generar ticket
@@ -79,10 +79,26 @@ export class TicketsService {
       valorRecaudado: 0,
     });
 
-    const TicketGuardado = await this.ticketRepository.save(ticket);
-    
-    // Cambiar de estado al espacio a OCUPADO
+    // La ocupacion usa compare-and-set en ms-zonas: solo una solicitud puede
+    // ganar cuando dos tickets compiten por el mismo espacio.
     await this.actualizarEstadoEspacio(tenantId, createTicketDto.idEspacio, 'OCUPADO');
+
+    let TicketGuardado: Ticket;
+    try {
+      TicketGuardado = await this.ticketRepository.save(ticket);
+    } catch (error: any) {
+      // Compensacion: si la persistencia falla, el espacio no puede quedar
+      // ocupado sin un ticket asociado.
+      try {
+        await this.actualizarEstadoEspacio(tenantId, createTicketDto.idEspacio, 'DISPONIBLE');
+      } catch (compensacion) {
+        this.logger.error(`Fallo compensando el espacio ${createTicketDto.idEspacio}: ${compensacion}`);
+      }
+      if (error?.driverError?.code === '23505') {
+        throw new ConflictException('El vehículo o el espacio ya posee un ticket activo');
+      }
+      throw error;
+    }
 
     this.logger.log(`Ticket creado con exito: ${JSON.stringify(TicketGuardado)} para la placa ${createTicketDto.placa}`);
 
@@ -108,7 +124,7 @@ export class TicketsService {
     const ticket = await this.ticketRepository.findOne({ where: { tenantId, id } });
 
     if (!ticket) {
-      throw new BadRequestException("Ticket no encontrado");
+      throw new NotFoundException("Ticket no encontrado");
     }
 
     return ticket;
@@ -128,12 +144,10 @@ export class TicketsService {
   async cerrarTicket(tenantId: string, id: string, updateTicketDto?: UpdateTicketDto): Promise<Ticket> {
     //1 buscar ticket
     const ticket = await this.findOne(tenantId, id);
-    //2 validar ticket
-    if (!ticket) {
-      throw new BadRequestException("Ticket no encontrado");
+    if (!ticket.activo) {
+      throw new ConflictException('El ticket ya se encuentra cerrado');
     }
-    //3 cerrar ticket
-    ticket.activo = false;
+
     ticket.fechaHoraSalida = new Date();
 
     //4 calcular valor recaudado
@@ -153,10 +167,23 @@ export class TicketsService {
 
     ticket.valorRecaudado = updateTicketDto?.valorRecaudado ?? costo;
 
-    // Actualizar estado del espacio a DISPONIBLE
-    await this.actualizarEstadoEspacio(tenantId, ticket.idEspacio, 'DISPONIBLE');
+    // Cierre compare-and-set: ante dos cierres simultaneos solo uno cambia
+    // activo=true a false y, por tanto, solo uno libera el espacio.
+    const resultado = await this.ticketRepository.update(
+      { tenantId, id, activo: true },
+      {
+        activo: false,
+        fechaHoraSalida: ticket.fechaHoraSalida,
+        valorRecaudado: ticket.valorRecaudado,
+      },
+    );
+    if (resultado.affected !== 1) {
+      throw new ConflictException('El ticket ya se encuentra cerrado');
+    }
 
-    const closedTicket = await this.ticketRepository.save(ticket);
+    await this.actualizarEstadoEspacio(tenantId, ticket.idEspacio, 'DISPONIBLE');
+    const closedTicket = await this.ticketRepository.findOne({ where: { tenantId, id } });
+    if (!closedTicket) throw new NotFoundException('Ticket no encontrado tras el cierre');
     this.logger.log(`Ticket cerrado con exito: ${JSON.stringify(closedTicket)} para la placa ${closedTicket.placa}`);
 
     // Notificar al dashboard (SSE)
@@ -208,11 +235,15 @@ export class TicketsService {
       const url = `${this.espacioUrl}/${idEspacio}`;
       const espacio = await this.httpClient.get<Espacio>(tenantId, url);
 
-      if (espacio && (espacio.idZona === idZona || espacio.nombreZona === idZona) && espacio.estado === 'DISPONIBLE') {
-        return espacio;
+      if (!espacio || (espacio.idZona !== idZona && espacio.nombreZona !== idZona)) return null;
+      if (espacio.estado !== 'DISPONIBLE') {
+        throw new ConflictException(
+          `El espacio no está disponible (estado: ${espacio.estado.toLowerCase()})`,
+        );
       }
-      return null;
+      return espacio;
     } catch (error) {
+      if (error instanceof ConflictException) throw error;
       this.logger.error(`Error al buscar el espacio disponible ${idEspacio}: ${error}`);
       return null;
     }
@@ -238,6 +269,9 @@ export class TicketsService {
       await this.httpClient.patch(tenantId, url);
     } catch (error) {
       this.logger.error(`Error al actualizar estado del espacio ${idEspacio} a ${estado}: ${error}`);
+      if ((error as any)?.status === 409) {
+        throw new ConflictException('Espacio no disponible');
+      }
       throw new BadRequestException(`No se pudo actualizar el estado del espacio: ${error}`);
     }
   }

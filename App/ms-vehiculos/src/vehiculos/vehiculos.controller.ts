@@ -28,12 +28,12 @@ export class VehiculosController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateVehiculoDto: UpdateVehiculoDto) {
-    return this.vehiculosService.update(id, updateVehiculoDto);
+  update(@Headers('x-tenant-id') tenantId: string, @Param('id') id: string, @Body() updateVehiculoDto: UpdateVehiculoDto) {
+    return this.vehiculosService.update(tenantId, id, updateVehiculoDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.vehiculosService.remove(id);
+  remove(@Headers('x-tenant-id') tenantId: string, @Param('id') id: string) {
+    return this.vehiculosService.remove(tenantId, id);
   }
 }

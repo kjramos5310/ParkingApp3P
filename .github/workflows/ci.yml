@@ -114,17 +114,25 @@ jobs:
 
       - name: Leer el Quality Gate
         id: gate
-        continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          # La API tarda unos segundos en publicar el resultado del analisis.
-          sleep 20
-          RESPUESTA=$(curl -s -u "$SONAR_TOKEN:" \
-            "https://sonarcloud.io/api/qualitygates/project_status?projectKey=kjramos5310_ParkingApp3P")
-          ESTADO=$(echo "$RESPUESTA" | jq -r '.projectStatus.status // "DESCONOCIDO"')
+          ESTADO="DESCONOCIDO"
+          for intento in $(seq 1 30); do
+            RESPUESTA=$(curl --fail --silent --show-error -u "$SONAR_TOKEN:" \
+              "https://sonarcloud.io/api/qualitygates/project_status?projectKey=kjramos5310_ParkingApp3P")
+            ESTADO=$(echo "$RESPUESTA" | jq -r '.projectStatus.status // "DESCONOCIDO"')
+            if [ "$ESTADO" != "NONE" ] && [ "$ESTADO" != "DESCONOCIDO" ]; then
+              break
+            fi
+            sleep 10
+          done
           echo "estado=$ESTADO" >> "$GITHUB_OUTPUT"
           echo "Quality Gate: $ESTADO"
+          if [ "$ESTADO" != "OK" ]; then
+            echo "::error::SonarCloud Quality Gate no aprobado: $ESTADO"
+            exit 1
+          fi
 
   # ===========================================================================
   # 3. Validacion de los manifiestos de Kubernetes
@@ -140,7 +148,7 @@ jobs:
         run: |
           python k8s/sync-kong-config.py
           if ! git diff --quiet k8s/07-kong-config.yaml; then
-            echo "::error::k8s/07-kong-config.yaml no coincide con App/kong.yml."
+            echo "::error::k8s/07-kong-config.yaml no coincide con kong-config/kong.yml."
             echo "Ejecuta 'python k8s/sync-kong-config.py' y confirma el cambio."
             git diff k8s/07-kong-config.yaml
             exit 1
@@ -160,11 +168,9 @@ jobs:
   # 4. Construccion y publicacion de imagenes Docker
   # ===========================================================================
   docker:
-    name: Publicar imagenes
+    name: Construir/publicar imagenes
     runs-on: ubuntu-latest
     needs: [build-and-test, validar-k8s]
-    # Solo se publican imagenes de las ramas principales, no de cada PR.
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     permissions:
       contents: read
       packages: write
@@ -192,6 +198,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Autenticarse en GitHub Container Registry
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -212,7 +219,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.contexto }}
-          push: true
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.nombre }}

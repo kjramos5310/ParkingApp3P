@@ -96,6 +96,15 @@ class MotocicletaDTO extends BaseVehiculoDto {
     })
     placa!: string;
 
+    @IsNumber()
+    @IsPositive()
+    cilindraje!: number;
+
+    @IsString()
+    @IsNotEmpty()
+    @MinLength(3)
+    tipoManubrio!: string;
+
     @IsString()
     @IsNotEmpty()
     @IsEnum(TipoMotocicleta, {

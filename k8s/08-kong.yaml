@@ -2,7 +2,7 @@
 # Toda la comunicacion externa hacia los microservicios pasa por aqui:
 # enrutamiento, rate limiting, validacion JWT y balanceo de carga.
 # La configuracion declarativa se monta desde el ConfigMap kong-declarative-config
-# (generado a partir de App/kong.yml por k8s/sync-kong-config.py).
+# (generado a partir de kong-config/kong.yml por k8s/sync-kong-config.py).
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -66,6 +66,10 @@ spec:
               value: /kong/rendered/kong.yml
             - name: KONG_PROXY_LISTEN
               value: "0.0.0.0:8000"
+            # El nodo local puede anunciar muchos CPU virtuales. Limitar los
+            # workers evita que dos replicas de Kong saturen minikube.
+            - name: KONG_NGINX_WORKER_PROCESSES
+              value: '2'
             # El puerto Admin se restringe a loopback: no debe exponerse en el
             # cluster, la configuracion es inmutable y viene del ConfigMap.
             - name: KONG_ADMIN_LISTEN
@@ -80,18 +84,27 @@ spec:
             - name: kong-rendered
               mountPath: /kong/rendered
               readOnly: true
+          startupProbe:
+            httpGet:
+              path: /status
+              port: 8100
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /status
               port: 8100
-            initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /status
               port: 8100
-            initialDelaySeconds: 30
             periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests:
               memory: "256Mi"

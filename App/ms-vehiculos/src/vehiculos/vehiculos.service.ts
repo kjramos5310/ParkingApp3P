@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { CreateVehiculoDto } from './dto/create-vehiculo.dto';
 import { UpdateVehiculoDto } from './dto/update-vehiculo.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -38,12 +39,18 @@ export class VehiculosService {
       }
     )
     if (existe) {
-      throw new Error('Ya existe un vehiculo con la placa ' + createVehiculoDto.datos.placa)
+      throw new ConflictException('La placa ya está registrada en este tenant')
     }
 
     const vehiculo = FactoryVehiculos.crear(createVehiculoDto);
     vehiculo.tenantId = tenantId;
-    const saved = await this.vehiculoRepository.save(vehiculo);
+    let saved: Vehiculo;
+    try {
+      saved = await this.vehiculoRepository.save(vehiculo);
+    } catch (error: any) {
+      if (error?.driverError?.code === '23505') throw new ConflictException('La placa ya está registrada en este tenant');
+      throw error;
+    }
     await this.emitEvent('CREATE', saved);
     return saved;
   }
@@ -65,7 +72,7 @@ export class VehiculosService {
       }
     )
     if (!vehiculo) {
-      throw new Error('No se encontro ningun vehiculo con el id ' + id)
+      throw new NotFoundException('Vehiculo no encontrado')
     }
     return vehiculo;
   }
@@ -75,17 +82,35 @@ export class VehiculosService {
       where: { tenantId, placa: placa }
     });
     if (!vehiculo) {
-      throw new Error('No se encontro ningun vehiculo con la placa ' + placa);
+      throw new NotFoundException('Vehiculo no encontrado');
     }
     return vehiculo;
   }
 
-  update(id: string, updateVehiculoDto: UpdateVehiculoDto) {
-    return `This action updates a #${id} vehiculo`;
+  async update(tenantId: string, id: string, updateVehiculoDto: UpdateVehiculoDto): Promise<Vehiculo> {
+    const vehiculo = await this.findOne(tenantId, id);
+    const datos = updateVehiculoDto.datos as Partial<Vehiculo> | undefined;
+
+    if (datos?.placa && datos.placa !== vehiculo.placa) {
+      const duplicado = await this.vehiculoRepository.findOne({ where: { tenantId, placa: datos.placa } });
+      if (duplicado) throw new ConflictException('La placa ya está registrada en este tenant');
+    }
+
+    Object.assign(vehiculo, datos ?? {});
+    try {
+      const actualizado = await this.vehiculoRepository.save(vehiculo);
+      await this.emitEvent('UPDATE', actualizado);
+      return actualizado;
+    } catch (error: any) {
+      if (error?.driverError?.code === '23505') throw new ConflictException('La placa ya está registrada en este tenant');
+      throw error;
+    }
   }
 
-  remove(id: string) {
-    return `This action removes a #${id} vehiculo`;
+  async remove(tenantId: string, id: string): Promise<void> {
+    const vehiculo = await this.findOne(tenantId, id);
+    await this.vehiculoRepository.remove(vehiculo);
+    await this.emitEvent('DELETE', vehiculo);
   }
 
 

@@ -72,7 +72,7 @@ aplica todos los manifiestos.
 
 ```bash
 # 1. Clúster y addons
-minikube start --cpus=4 --memory=8192
+minikube start --cpus=4 --memory=6144
 minikube addons enable ingress
 minikube addons enable metrics-server
 
@@ -95,15 +95,26 @@ kubectl -n parqueadero wait --for=condition=available --timeout=600s deployment 
 
 ### Acceso
 
-Agrega la IP de minikube a tu archivo `hosts`:
+En Windows con el driver Docker, ejecuta en otra PowerShell como administrador
+y deja el proceso abierto:
+
+```powershell
+minikube tunnel
+```
+
+Agrega esta entrada a `C:\Windows\System32\drivers\etc\hosts`:
 
 ```
-# Windows: C:\Windows\System32\drivers\etc\hosts  (como administrador)
-# Linux/macOS: /etc/hosts
+127.0.0.1  parqueadero.espe.edu.ec
+```
+
+En otros drivers o sistemas usa la dirección que devuelve `minikube ip`:
+
+```
 <minikube-ip>  parqueadero.espe.edu.ec
 ```
 
-Obtén la IP con `minikube ip`. Luego abre **https://parqueadero.espe.edu.ec**.
+Luego abre **http://parqueadero.espe.edu.ec**.
 
 ### Certificado TLS
 
@@ -163,7 +174,7 @@ kubectl -n parqueadero scale deployment/ms-vehiculos --replicas=5
 
 ### Cambiar la configuración de Kong
 
-`App/kong.yml` es la única fuente de verdad:
+`kong-config/kong.yml` es la única fuente de verdad:
 
 ```bash
 python k8s/sync-kong-config.py
@@ -224,7 +235,7 @@ El pipeline (`.github/workflows/ci.yml`) ejecuta:
 
 1. **Compilar y probar** — Maven `verify` y Jest en los tres servicios NestJS y el frontend.
 2. **SonarCloud** — análisis estático y lectura del Quality Gate.
-3. **Validar K8s** — `kubeconform` sobre `k8s/` y verificación de que el ConfigMap de Kong esté sincronizado con `App/kong.yml`.
+3. **Validar K8s** — `kubeconform` sobre `k8s/` y verificación de que el ConfigMap de Kong esté sincronizado con `kong-config/kong.yml`.
 4. **Imágenes Docker** — build y push a GHCR (solo en `main` y `dev`).
 5. **Desplegar** — `kubectl apply` sobre `main` (requiere el secret `KUBECONFIG`).
 6. **Telegram** — resumen con el resultado de cada etapa y el Quality Gate.
@@ -272,7 +283,7 @@ kubectl -n parqueadero exec deployment/kong -- env | grep JWT_SECRET
 
 **Kong responde 429**
 Es el rate limiting funcionando: 120 peticiones por minuto en general y 10 por
-minuto en `/api/auth`. Ajusta los valores en `App/kong.yml` si necesitas más.
+minuto en `/api/auth`. Ajusta los valores en `kong-config/kong.yml` si necesitas más.
 
 **Los eventos no llegan a auditoría**
 ```bash

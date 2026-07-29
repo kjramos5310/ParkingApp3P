@@ -33,7 +33,7 @@ public class EspacioController {
     // Stream SSE de cambios de estado de espacios para el dashboard
     @GetMapping(value = "/sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamEspacios() {
-        return espacioEventService.subscribe();
+        return espacioEventService.subscribe(espacioService.obtenerEspacios());
     }
 
     @GetMapping("/{id}")

@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Genera k8s/07-kong-config.yaml a partir de App/kong.yml.
+"""Genera k8s/07-kong-config.yaml a partir de kong-config/kong.yml.
 
-App/kong.yml es la unica fuente de verdad de la configuracion del gateway:
+kong-config/kong.yml es la unica fuente de verdad de la configuracion del gateway:
 docker-compose la monta como volumen y Kubernetes la consume a traves del
-ConfigMap que produce este script. Ejecutalo cada vez que edites App/kong.yml:
+ConfigMap que produce este script. Ejecutalo cada vez que edites kong-config/kong.yml:
 
     python k8s/sync-kong-config.py
 
 Equivalente con kubectl (requiere cluster activo):
 
     kubectl -n parqueadero create configmap kong-declarative-config \
-      --from-file=kong.yml=App/kong.yml --dry-run=client -o yaml
+      --from-file=kong.yml=kong-config/kong.yml --dry-run=client -o yaml
 """
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = ROOT / "App" / "kong.yml"
+SOURCE = ROOT / "kong-config" / "kong.yml"
 TARGET = ROOT / "k8s" / "07-kong-config.yaml"
 
 HEADER = """# =============================================================================
 # ARCHIVO GENERADO - NO EDITAR A MANO
-# Fuente: App/kong.yml   |   Regenerar: python k8s/sync-kong-config.py
+# Fuente: kong-config/kong.yml   |   Regenerar: python k8s/sync-kong-config.py
 # =============================================================================
 apiVersion: v1
 kind: ConfigMap

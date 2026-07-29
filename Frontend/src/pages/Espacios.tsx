@@ -20,7 +20,7 @@ import { useAuth, useTenant } from '../lib/auth';
 import type { Espacio, EstadoEspacio, TipoEspacio, Zona } from '../lib/types';
 
 const TIPOS: TipoEspacio[] = ['AUTO', 'MOTO', 'BUSETA', 'BUS', 'CAMION'];
-const ESTADOS: EstadoEspacio[] = ['DISPONIBLE', 'OCUPADO', 'RESERVADO'];
+const ESTADOS: EstadoEspacio[] = ['DISPONIBLE', 'OCUPADO', 'RESERVADO', 'MANTENIMIENTO'];
 
 export function Espacios() {
   const tenant = useTenant();

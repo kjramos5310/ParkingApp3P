@@ -98,7 +98,7 @@ lo resuelve `JwtAuthGuard`, que lo deja en `request.tenantId`.
 
 ## API Gateway (Kong)
 
-`App/kong.yml` es la única fuente de verdad. Docker Compose la monta como
+`kong-config/kong.yml` es la única fuente de verdad. Docker Compose la monta como
 volumen; Kubernetes la consume desde el ConfigMap que genera
 `k8s/sync-kong-config.py`.
 

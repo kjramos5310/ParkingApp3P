@@ -25,7 +25,7 @@ spec:
       containers:
         - name: ms-tickets
           image: parkingapp/ms-tickets:latest
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           env:

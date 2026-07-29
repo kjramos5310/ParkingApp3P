@@ -15,7 +15,8 @@ Todo el stack corre en **Docker** con un solo comando, o en **Kubernetes** con u
 ## 🗂️ Estructura
 
 ```
-App/               5 microservicios + kong.yml (config del gateway)
+App/               5 microservicios independientes
+kong-config/       Configuración declarativa de Kong
 Frontend/          SPA React + Vite + Tailwind
 k8s/               Manifiestos de Kubernetes e Ingress
 docs/              Arquitectura y manual de despliegue
@@ -232,12 +233,12 @@ El espacio debe estar en estado `DISPONIBLE` y su zona **no** puede estar deshab
 ```
 ├── App/
 │   ├── db/                      # Script de init de PostgreSQL (crea 1 BD por servicio)
-│   ├── kong.yml                 # Configuración declarativa del API Gateway
 │   ├── ms-usuarios-roles-auth/  # Spring Boot — usuarios, roles, auth (JWT)
 │   ├── ms-zonas-espacios/       # Spring Boot — zonas, espacios, SSE
 │   ├── ms-vehiculos/            # NestJS — vehículos
 │   ├── ms-tickets/              # NestJS — tickets, SSE
 │   └── ms-audith/               # NestJS — auditoría (consumidor RabbitMQ)
+├── kong-config/                 # Configuración declarativa del API Gateway
 ├── Frontend/                    # SPA React + Vite + Tailwind (Nginx)
 ├── k8s/                         # Manifiestos de Kubernetes e Ingress
 ├── docs/                        # Arquitectura y manual de despliegue

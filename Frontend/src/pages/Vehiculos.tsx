@@ -48,6 +48,7 @@ interface FormularioVehiculo {
   capacidadCarga: number;
   // Motocicleta
   tipoMoto: string;
+  tipoManubrio: string;
 }
 
 const INICIAL: FormularioVehiculo = {
@@ -63,6 +64,7 @@ const INICIAL: FormularioVehiculo = {
   cabina: 'Doble',
   capacidadCarga: 2,
   tipoMoto: 'SCOOTER',
+  tipoManubrio: 'Recto',
 };
 
 /** Arma el payload anidado que espera CreateVehiculoDto segun el tipo. */
@@ -96,8 +98,38 @@ function construirPayload(formulario: FormularioVehiculo) {
         },
       };
     case 'Motocicleta':
-      return { tipo: 'Motocicleta', datos: { ...base, tipo: formulario.tipoMoto } };
+      return {
+        tipo: 'Motocicleta',
+        datos: {
+          ...base,
+          cilindraje: Number(formulario.cilindraje),
+          tipoManubrio: formulario.tipoManubrio.trim(),
+          tipo: formulario.tipoMoto,
+        },
+      };
   }
+}
+
+function formularioDesde(vehiculo: Vehiculo): FormularioVehiculo {
+  const tipoInformado = vehiculo.tipo === 'Moto' ? 'Motocicleta' : vehiculo.tipo;
+  const tipo = TIPOS.includes(tipoInformado as TipoVehiculo)
+    ? (tipoInformado as TipoVehiculo)
+    : 'Auto';
+  return {
+    tipo,
+    marca: vehiculo.marca ?? '',
+    placa: vehiculo.placa ?? '',
+    modelo: vehiculo.modelo ?? '',
+    color: vehiculo.color ?? '',
+    anio: Number(vehiculo.anio ?? new Date().getFullYear()),
+    numeroPuertas: Number(vehiculo.numeroPuertas ?? 4),
+    capacidadMaletero: Number(vehiculo.capacidadMaletero ?? 3),
+    cilindraje: Number(vehiculo.cilindraje ?? 2000),
+    cabina: String(vehiculo.cabina ?? 'Doble'),
+    capacidadCarga: Number(vehiculo.capacidadCarga ?? 2),
+    tipoMoto: String(vehiculo.tipoMotocicleta ?? 'SCOOTER'),
+    tipoManubrio: String(vehiculo.tipoManubrio ?? 'Recto'),
+  };
 }
 
 export function Vehiculos() {
@@ -108,6 +140,7 @@ export function Vehiculos() {
   const { datos, cargando, error, recargar } = useRecurso<Vehiculo[]>(cargar);
 
   const [dialogoAbierto, setDialogoAbierto] = useState(false);
+  const [vehiculoEnEdicion, setVehiculoEnEdicion] = useState<Vehiculo | null>(null);
   const [formulario, setFormulario] = useState<FormularioVehiculo>(INICIAL);
   const [errorFormulario, setErrorFormulario] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
@@ -116,19 +149,32 @@ export function Vehiculos() {
     setFormulario((actual) => ({ ...actual, [campo]: valor }));
   }
 
-  async function crear(evento: FormEvent) {
+  async function guardar(evento: FormEvent) {
     evento.preventDefault();
     setErrorFormulario(null);
     setGuardando(true);
     try {
-      await apiVehiculos.crear(tenant, construirPayload(formulario));
+      const payload = construirPayload(formulario);
+      if (vehiculoEnEdicion) {
+        await apiVehiculos.actualizar(tenant, vehiculoEnEdicion.id, payload);
+      } else {
+        await apiVehiculos.crear(tenant, payload);
+      }
       setDialogoAbierto(false);
+      setVehiculoEnEdicion(null);
       recargar();
     } catch (fallo) {
       setErrorFormulario(fallo instanceof Error ? fallo.message : 'No se pudo registrar el vehiculo.');
     } finally {
       setGuardando(false);
     }
+  }
+
+  function editar(vehiculo: Vehiculo) {
+    setVehiculoEnEdicion(vehiculo);
+    setFormulario(formularioDesde(vehiculo));
+    setErrorFormulario(null);
+    setDialogoAbierto(true);
   }
 
   async function eliminar(vehiculo: Vehiculo) {
@@ -153,6 +199,7 @@ export function Vehiculos() {
             <Boton
               variante="primario"
               onClick={() => {
+                setVehiculoEnEdicion(null);
                 setFormulario(INICIAL);
                 setErrorFormulario(null);
                 setDialogoAbierto(true);
@@ -185,7 +232,10 @@ export function Vehiculos() {
                 <Celda className="tabular-nums">{vehiculo.anio}</Celda>
                 <Celda>
                   {esAdmin && (
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
+                      <Boton onClick={() => editar(vehiculo)}>
+                        Editar
+                      </Boton>
                       <Boton variante="peligro" onClick={() => eliminar(vehiculo)}>
                         Eliminar
                       </Boton>
@@ -311,18 +361,32 @@ export function Vehiculos() {
             )}
 
             {formulario.tipo === 'Motocicleta' && (
-              <Campo label="Tipo de motocicleta">
-                <Seleccion
-                  value={formulario.tipoMoto}
-                  onChange={(evento) => actualizar('tipoMoto', evento.target.value)}
-                >
-                  {TIPOS_MOTO.map((tipo) => (
-                    <option key={tipo} value={tipo}>
-                      {tipo}
-                    </option>
-                  ))}
-                </Seleccion>
-              </Campo>
+              <div className="grid grid-cols-2 gap-4">
+                <Campo label="Cilindraje">
+                  <Entrada
+                    type="number"
+                    min={1}
+                    value={formulario.cilindraje}
+                    onChange={(evento) => actualizar('cilindraje', Number(evento.target.value))}
+                  />
+                </Campo>
+                <Campo label="Tipo de manubrio">
+                  <Entrada
+                    value={formulario.tipoManubrio}
+                    onChange={(evento) => actualizar('tipoManubrio', evento.target.value)}
+                  />
+                </Campo>
+                <Campo label="Tipo de motocicleta">
+                  <Seleccion
+                    value={formulario.tipoMoto}
+                    onChange={(evento) => actualizar('tipoMoto', evento.target.value)}
+                  >
+                    {TIPOS_MOTO.map((tipo) => (
+                      <option key={tipo} value={tipo}>{tipo}</option>
+                    ))}
+                  </Seleccion>
+                </Campo>
+              </div>
             )}
 
             <div className="flex justify-end gap-2 pt-1">

@@ -1,6 +1,7 @@
 package ec.edu.espe.zonas.audit;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,6 +21,12 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Enumeration;
 import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import ec.edu.espe.zonas.tenant.TenantContext;
 
@@ -44,6 +51,15 @@ public class AuditPublisher {
     private final String exchange;
     private final String routingKey;
     private final String servicio;
+
+    private final Queue<AuditEvent> pending = new ConcurrentLinkedQueue<>();
+    private final AtomicBoolean flushing = new AtomicBoolean(false);
+    private final ScheduledExecutorService retryExecutor =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "audit-rabbit-retry");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     /** IP publica del servidor, cacheada al arrancar. */
     private volatile String cachedPublicIp = "127.0.0.1";
@@ -83,6 +99,12 @@ public class AuditPublisher {
         }, "audit-public-ip");
         t.setDaemon(true);
         t.start();
+        retryExecutor.scheduleWithFixedDelay(this::flushPending, 5, 5, TimeUnit.SECONDS);
+    }
+
+    @PreDestroy
+    void shutdownRetryExecutor() {
+        retryExecutor.shutdownNow();
     }
 
     /**
@@ -109,10 +131,38 @@ public class AuditPublisher {
                     .mac(resolveMac(request))
                     .build();
 
-            rabbitTemplate.convertAndSend(exchange, routingKey, event);
-            log.info("Evento de auditoria publicado: {} {} por {}", accion, entidad, event.getUsuario());
+            pending.add(event);
+            flushPending();
         } catch (Exception ex) {
             log.error("No se pudo publicar el evento de auditoria ({} {}): {}", accion, entidad, ex.getMessage());
+        }
+    }
+
+    private void flushPending() {
+        if (!flushing.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            AuditEvent event;
+            while ((event = pending.peek()) != null) {
+                try {
+                    AuditEvent current = event;
+                    rabbitTemplate.invoke(operations -> {
+                        operations.convertAndSend(exchange, routingKey, current);
+                        operations.waitForConfirmsOrDie(5000);
+                        return null;
+                    });
+                    pending.poll();
+                    log.info("Evento de auditoria confirmado: {} {} por {}",
+                            event.getAccion(), event.getEntidad(), event.getUsuario());
+                } catch (Exception ex) {
+                    log.warn("RabbitMQ no disponible; {} evento(s) quedan pendientes: {}",
+                            pending.size(), ex.getMessage());
+                    break;
+                }
+            }
+        } finally {
+            flushing.set(false);
         }
     }
 

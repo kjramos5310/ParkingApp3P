@@ -11,6 +11,7 @@ metadata:
     app: ms-zonas
     tier: backend
 spec:
+  progressDeadlineSeconds: 1200
   # NOTA: los emisores SSE se mantienen en memoria de cada pod. Con mas de una
   # replica un cliente solo recibe los eventos generados por el pod al que quedo
   # conectado. Para escalar horizontalmente el stream hay que difundir los
@@ -28,10 +29,12 @@ spec:
       containers:
         - name: ms-zonas
           image: parkingapp/ms-zonas:latest
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8082
           env:
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: 'true'
             - name: SPRING_DATASOURCE_URL
               value: "jdbc:mysql://mysql:3306/db_zonas_espacios?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
             - name: SPRING_DATASOURCE_USERNAME
@@ -68,18 +71,18 @@ spec:
                 name: parking-config
           startupProbe:
             httpGet:
-              path: /actuator/health
+              path: /actuator/health/liveness
               port: 8082
-            failureThreshold: 30
+            failureThreshold: 90
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /actuator/health
+              path: /actuator/health/readiness
               port: 8082
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /actuator/health
+              path: /actuator/health/liveness
               port: 8082
             periodSeconds: 20
           resources:

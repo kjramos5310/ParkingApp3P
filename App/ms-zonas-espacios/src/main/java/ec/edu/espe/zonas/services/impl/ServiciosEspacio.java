@@ -255,16 +255,31 @@ public class ServiciosEspacio implements EspacioService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La zona del espacio esta deshabilitada");
         }
 
-        if (estado == EstadoEspacio.RESERVADO && espacio.getEstado() != EstadoEspacio.DISPONIBLE) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El espacio no se puede reservar porque su estado actual es: " + espacio.getEstado());
+        EstadoEspacio actual = espacio.getEstado();
+        boolean transicionPermitida = switch (actual) {
+            case DISPONIBLE -> estado == EstadoEspacio.OCUPADO
+                    || estado == EstadoEspacio.RESERVADO
+                    || estado == EstadoEspacio.MANTENIMIENTO;
+            case RESERVADO -> estado == EstadoEspacio.DISPONIBLE
+                    || estado == EstadoEspacio.OCUPADO;
+            case OCUPADO -> estado == EstadoEspacio.DISPONIBLE;
+            case MANTENIMIENTO -> estado == EstadoEspacio.DISPONIBLE;
+        };
+
+        if (!transicionPermitida) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Transicion de estado no permitida: " + actual + " -> " + estado);
         }
 
-        if (estado == EstadoEspacio.OCUPADO && espacio.getEstado() == EstadoEspacio.OCUPADO) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El espacio ya se encuentra ocupado");
+        int actualizados = espacioRepository.cambiarEstadoSiCoincide(
+                TenantContext.get(), id, actual, estado);
+        if (actualizados != 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Espacio no disponible: su estado cambio por otra operacion concurrente");
         }
 
-        espacio.setEstado(estado);
-        espacio = espacioRepository.save(espacio);
+        espacio = espacioRepository.findByTenantIdAndId(TenantContext.get(), id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Espacio no encontrado"));
         EspacioResponseDto dto = mapToEspacioResponseDto(espacio);
         espacioEventService.publishEspacioCambiado(dto);
         cache.evict(CACHE_ESPACIOS);

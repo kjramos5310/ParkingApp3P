@@ -23,7 +23,7 @@ spec:
       containers:
         - name: ms-vehiculos
           image: parkingapp/ms-vehiculos:latest
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           env:

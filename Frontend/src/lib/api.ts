@@ -190,6 +190,8 @@ export const vehiculos = {
   listar: (tenant: string) => peticion<Vehiculo[]>('/vehiculos', { tenant }),
   crear: (tenant: string, datos: VehiculoPayload) =>
     peticion<Vehiculo>('/vehiculos', { method: 'POST', tenant, body: datos }),
+  actualizar: (tenant: string, id: string, datos: VehiculoPayload) =>
+    peticion<Vehiculo>(`/vehiculos/${id}`, { method: 'PATCH', tenant, body: datos }),
   eliminar: (tenant: string, id: string) =>
     peticion<void>(`/vehiculos/${id}`, { method: 'DELETE', tenant }),
 };

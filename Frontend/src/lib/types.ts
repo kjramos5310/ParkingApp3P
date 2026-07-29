@@ -1,4 +1,4 @@
-export type EstadoEspacio = 'DISPONIBLE' | 'OCUPADO' | 'RESERVADO';
+export type EstadoEspacio = 'DISPONIBLE' | 'OCUPADO' | 'RESERVADO' | 'MANTENIMIENTO';
 export type TipoEspacio = 'AUTO' | 'MOTO' | 'BUSETA' | 'BUS' | 'CAMION';
 export type TipoZona = 'VIP' | 'VISITANTES' | 'GENERAL' | 'PREFERENCIAL';
 

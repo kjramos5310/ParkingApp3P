@@ -97,6 +97,7 @@ export function LeyendaEstados() {
     { estado: 'DISPONIBLE', texto: 'Libre' },
     { estado: 'OCUPADO', texto: 'Ocupado' },
     { estado: 'RESERVADO', texto: 'Reservado' },
+    { estado: 'MANTENIMIENTO', texto: 'Mantenimiento' },
   ] as const;
 
   return (

@@ -40,6 +40,16 @@ export function useEspaciosSSE(tenant: string): ResultadoSSE {
     fuente.onopen = () => setEstado('en-vivo');
     fuente.onerror = () => setEstado('sin-conexion');
 
+    fuente.addEventListener('snapshot', (evento) => {
+      try {
+        const espacios = JSON.parse((evento as MessageEvent).data) as Espacio[];
+        setCambios(new Map(espacios.map((espacio) => [espacio.id, espacio])));
+        setEstado('en-vivo');
+      } catch {
+        setEstado('sin-conexion');
+      }
+    });
+
     fuente.addEventListener('espacio_cambiado', (evento) => {
       try {
         const espacio = JSON.parse((evento as MessageEvent).data) as Espacio;

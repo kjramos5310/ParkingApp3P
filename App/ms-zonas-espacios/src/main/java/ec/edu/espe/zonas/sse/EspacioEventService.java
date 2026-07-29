@@ -20,7 +20,7 @@ public class EspacioEventService {
 
     private final Map<String, List<SseEmitter>> emittersByTenant = new ConcurrentHashMap<>();
 
-    public SseEmitter subscribe() {
+    public SseEmitter subscribe(List<EspacioResponseDto> snapshot) {
         String tenantId = TenantContext.get();
         List<SseEmitter> emitters = emittersByTenant.computeIfAbsent(tenantId, ignored -> new CopyOnWriteArrayList<>());
         SseEmitter emitter = new SseEmitter(0L); // sin timeout: la conexion permanece abierta
@@ -32,6 +32,7 @@ public class EspacioEventService {
             emitter.send(SseEmitter.event()
                     .name("INIT")
                     .data("Conexion establecida con ms-zonas-espacios"));
+            emitter.send(SseEmitter.event().name("snapshot").data(snapshot));
         } catch (IOException e) {
             emitters.remove(emitter);
         }

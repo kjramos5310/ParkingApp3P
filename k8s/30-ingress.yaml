@@ -28,8 +28,9 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 
     # --- TLS ---
-    # Redirige HTTP a HTTPS. Ponlo en "false" si aun no tienes certificado.
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # El despliegue local no crea un certificado por defecto, por lo que se
+    # mantiene HTTP habilitado. Cambialo a "true" al crear parqueadero-tls.
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
     # Con cert-manager instalado, descomenta para emitir el certificado solo:
     # cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:

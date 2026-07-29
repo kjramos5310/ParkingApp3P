@@ -19,12 +19,15 @@ Write-Host "==> Verificando minikube..." -ForegroundColor Cyan
 $status = minikube status --format "{{.Host}}" 2>$null
 if ($status -ne "Running") {
     Write-Host "    minikube no esta activo. Arrancando..." -ForegroundColor Yellow
-    minikube start --cpus=4 --memory=8192
+    minikube start --cpus=4 --memory=6144
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo arrancar minikube' }
 }
 
 Write-Host "==> Habilitando addons (ingress, metrics-server)..." -ForegroundColor Cyan
 minikube addons enable ingress
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo habilitar el addon ingress' }
 minikube addons enable metrics-server
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo habilitar el addon metrics-server' }
 
 if (-not $SkipBuild) {
     # Apunta el cliente Docker al daemon interno de minikube: las imagenes se
@@ -54,23 +57,39 @@ python (Join-Path $PSScriptRoot "sync-kong-config.py")
 
 Write-Host "==> Aplicando manifiestos..." -ForegroundColor Cyan
 kubectl apply -f $PSScriptRoot
+if ($LASTEXITCODE -ne 0) { throw 'No se pudieron aplicar los manifiestos' }
 
 Write-Host "==> Esperando a que las bases de datos esten listas..." -ForegroundColor Cyan
-kubectl -n $Namespace wait --for=condition=available --timeout=300s `
+kubectl -n $Namespace wait --for=condition=available --timeout=600s `
     deployment/postgres deployment/mysql deployment/rabbitmq
+if ($LASTEXITCODE -ne 0) { throw 'La infraestructura no quedo disponible en 10 minutos' }
 
 Write-Host "==> Esperando a los microservicios..." -ForegroundColor Cyan
 kubectl -n $Namespace wait --for=condition=available --timeout=600s `
     deployment/ms-usuarios deployment/ms-zonas deployment/ms-vehiculos `
     deployment/ms-tickets deployment/ms-audith deployment/kong deployment/frontend
+if ($LASTEXITCODE -ne 0) { throw 'La aplicacion no quedo disponible en 10 minutos' }
 
 Write-Host ""
 Write-Host "==> Despliegue completado." -ForegroundColor Green
 kubectl -n $Namespace get pods,svc,ingress
 
-$ip = minikube ip
 Write-Host ""
-Write-Host "Agrega esta linea a C:\Windows\System32\drivers\etc\hosts (como administrador):" -ForegroundColor Yellow
-Write-Host "    $ip  parqueadero.espe.edu.ec" -ForegroundColor Yellow
+$profileList = minikube profile list -o json 2>$null | ConvertFrom-Json
+$activeProfile = $profileList.valid |
+    Where-Object { $_.Active } |
+    Select-Object -First 1
+
+if ($activeProfile.Config.Driver -eq "docker") {
+    Write-Host "Este perfil usa el driver Docker en Windows." -ForegroundColor Yellow
+    Write-Host "En otra PowerShell como administrador ejecuta y deja abierto:" -ForegroundColor Yellow
+    Write-Host "    minikube tunnel" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Agrega esta linea a C:\Windows\System32\drivers\etc\hosts (como administrador):" -ForegroundColor Yellow
+    Write-Host "    127.0.0.1  parqueadero.espe.edu.ec" -ForegroundColor Yellow
+} else {
+    $ip = minikube ip
+    Write-Host "Agrega esta linea a C:\Windows\System32\drivers\etc\hosts (como administrador):" -ForegroundColor Yellow
+    Write-Host "    $ip  parqueadero.espe.edu.ec" -ForegroundColor Yellow
+}
 Write-Host ""
-Write-Host "Luego abre: https://parqueadero.espe.edu.ec" -ForegroundColor Green

@@ -61,6 +61,7 @@ export class AuditConsumer implements OnModuleInit {
     private connection: any;
     private channel: any;
 
+    private connecting = false;
     constructor(
         private configService: ConfigService,
         private auditService: AuditService,
@@ -68,12 +69,13 @@ export class AuditConsumer implements OnModuleInit {
 
     async onModuleInit() {
         await this.connect();
-        await this.consume();
     }
 
     private async connect() {
         const host = this.configService.get('RABBITMQ_HOST');
         const port = this.configService.get('RABBITMQ_PORT');
+        if (this.connecting || this.channel) return;
+        this.connecting = true;
         const user = this.configService.get('RABBITMQ_USER');
         const pass = this.configService.get('RABBITMQ_PASSWORD');
         const url = `amqp://${user}:${pass}@${host}:${port}`;
@@ -82,9 +84,19 @@ export class AuditConsumer implements OnModuleInit {
             this.connection = await amqp.connect(url);
             this.channel = await this.connection.createChannel();
             this.logger.log(`Connected to RabbitMQ at ${url}`);
+            this.connection.once('close', () => {
+                this.channel = null;
+                this.connection = null;
+                setTimeout(() => void this.connect(), 1000).unref();
+            });
+            await this.consume();
         } catch (error) {
-            this.logger.error(`Failed to connect to RabbitMQ at ${error}`);
-            setTimeout(() => this.connect(), 5000); // Retry after 5 seconds
+            this.channel = null;
+            this.connection = null;
+            this.logger.error(`Failed to connect to RabbitMQ: ${error}`);
+            setTimeout(() => void this.connect(), 5000).unref();
+        } finally {
+            this.connecting = false;
         }
     }
 
@@ -96,6 +108,7 @@ export class AuditConsumer implements OnModuleInit {
         try {
             await this.channel.assertExchange(exchange, 'topic', { durable: true });
             await this.channel.assertQueue(queue, { durable: true });
+            await this.channel.prefetch(10);
             await this.channel.bindQueue(queue, exchange, routingKey);
 
             this.channel.consume(
@@ -104,6 +117,7 @@ export class AuditConsumer implements OnModuleInit {
                     if (msg) {
                         const content = msg.content.toString();
                         this.logger.debug(`Mensaje recibido: ${content}`);
+                        let dtoValidado = false;
                         try {
                             const raw = JSON.parse(content);
                             if (raw.fecha_hora) {
@@ -124,6 +138,7 @@ export class AuditConsumer implements OnModuleInit {
                             }
 
                             // Guardar el evento de auditoría
+                            dtoValidado = true;
                             await this.auditService.create(dto);
                             this.logger.debug('Evento de auditoría guardado exitosamente');
                             this.channel.ack(msg);
@@ -131,8 +146,9 @@ export class AuditConsumer implements OnModuleInit {
                             const errorMessage =
                                 err instanceof Error ? err.message : 'Error desconocido';
                             this.logger.error(`Error procesando mensaje: ${errorMessage}`);
-                            // Rechazar el mensaje y no reencolar
-                            this.channel.nack(msg, false, false);
+                            // Los errores de BD se reencolan; un JSON/DTO
+                            // invalido se descarta para evitar un bucle infinito.
+                            this.channel.nack(msg, false, dtoValidado);
                         }
                     }
                 },

@@ -1,4 +1,5 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
 
 @Injectable()
@@ -15,10 +16,13 @@ export class JwtAuthGuard implements CanActivate {
     if (!auth.startsWith('Bearer ') && !cookieToken) throw new UnauthorizedException('Token no proporcionado');
     try {
       const payload = jwt.verify(cookieToken || auth.slice(7), this.secret) as any;
-      if (payload.tenant_id !== tenantId) throw new Error('tenant mismatch');
+      if (payload.tenant_id !== tenantId) throw new ForbiddenException('El token pertenece a otra empresa');
       request.user = payload;
       request.tenantId = tenantId;
       return true;
-    } catch { throw new UnauthorizedException('Token invalido o de otra empresa'); }
+    } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
+      throw new UnauthorizedException('Token invalido o expirado');
+    }
   }
 }

@@ -28,6 +28,10 @@ export class EventPublisher implements OnModuleInit, OnModuleDestroy {
     private exchangeName: string;
     private routingKey: string;
     private readonly logger = new Logger(EventPublisher.name);
+    private readonly pending: AuditEvent[] = [];
+    private connecting = false;
+    private flushing = false;
+    private shuttingDown = false;
 
     constructor(private readonly configService: ConfigService) {
         this.exchangeName = this.configService.get<string>('RABBITMQ_EXCHANGE') || 'audit_exchange';
@@ -39,6 +43,7 @@ export class EventPublisher implements OnModuleInit, OnModuleDestroy {
     }
 
     async onModuleDestroy() {
+        this.shuttingDown = true;
         if (this.channel) {
             await this.channel.close();
         }
@@ -48,6 +53,8 @@ export class EventPublisher implements OnModuleInit, OnModuleDestroy {
     }
 
     private async connect() {
+        if (this.connecting || this.channel || this.shuttingDown) return;
+        this.connecting = true;
         try {
             const host = this.configService.get('RABBITMQ_HOST') || 'localhost';
             const port = this.configService.get('RABBITMQ_PORT') || 5672;
@@ -56,32 +63,56 @@ export class EventPublisher implements OnModuleInit, OnModuleDestroy {
             const url = `amqp://${user}:${pass}@${host}:${port}`;
 
             this.connection = await amqp.connect(url);
-            this.channel = await this.connection.createChannel();
-
+            this.channel = await this.connection.createConfirmChannel();
             await this.channel.assertExchange(this.exchangeName, 'topic', { durable: true });
+            this.connection.once('close', () => {
+                this.channel = null;
+                this.connection = null;
+                if (!this.shuttingDown) setTimeout(() => void this.connect(), 1000).unref();
+            });
             this.logger.log(`Connected to RabbitMQ and asserted exchange: ${this.exchangeName}`);
+            await this.flushPending();
         } catch (error) {
+            this.channel = null;
             const errMsg = error instanceof Error ? error.message : String(error);
             this.logger.error(`Failed to connect to RabbitMQ at URL. Error: ${errMsg}`);
-            setTimeout(() => this.connect(), 5000); // Retry after 5 seconds
+            if (!this.shuttingDown) setTimeout(() => void this.connect(), 5000).unref();
+        } finally {
+            this.connecting = false;
         }
     }
 
-    /**
-     * Publica un evento de auditoria. Nunca lanza: un fallo de mensajeria no
-     * debe interrumpir la operacion de negocio que disparo el evento.
-     */
-    async publishAuditEvent(event: AuditEvent): Promise<void> {
+    private async flushPending(): Promise<void> {
+        if (this.flushing || !this.channel) return;
+        this.flushing = true;
         try {
-            if (!this.channel) {
-                this.logger.warn('Channel is not established, event is not published');
-                return;
+            while (this.channel && this.pending.length > 0) {
+                const event = this.pending[0];
+                this.channel.publish(
+                    this.exchangeName,
+                    this.routingKey,
+                    Buffer.from(JSON.stringify(event)),
+                    { persistent: true, contentType: 'application/json' },
+                );
+                await this.channel.waitForConfirms();
+                this.pending.shift();
+                this.logger.log(`Evento confirmado: ${event.servicio} ${event.accion} ${event.entidad}`);
             }
-            const message = Buffer.from(JSON.stringify(event));
-            await this.channel.publish(this.exchangeName, this.routingKey, message, { persistent: true });
-            this.logger.log(`Evento Publicado: ${event.servicio} ${event.accion} ${event.entidad}`);
+        } finally {
+            this.flushing = false;
+        }
+    }
+
+    /** Conserva el evento y lo reintenta si RabbitMQ esta temporalmente caido. */
+    async publishAuditEvent(event: AuditEvent): Promise<void> {
+        this.pending.push(event);
+        try {
+            if (!this.channel) await this.connect();
+            await this.flushPending();
         } catch (error) {
-            this.logger.error(`Error publicando evento de auditoría: ${error}`);
+            this.logger.error(`Evento retenido para reintento: ${error}`);
+            this.channel = null;
+            if (!this.shuttingDown) setTimeout(() => void this.connect(), 1000).unref();
         }
     }
 }

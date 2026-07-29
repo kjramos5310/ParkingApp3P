@@ -60,16 +60,26 @@ spec:
           volumeMounts:
             - name: mysql-data
               mountPath: /var/lib/mysql
+          # Evita que livenessProbe mate MySQL mientras crea el esquema y el
+          # usuario durante el primer arranque.
+          startupProbe:
+            tcpSocket:
+              port: 3306
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             exec:
               command: ["mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
-            initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           livenessProbe:
             tcpSocket:
               port: 3306
-            initialDelaySeconds: 60
             periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests:
               memory: "512Mi"

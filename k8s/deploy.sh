@@ -19,7 +19,7 @@ SKIP_BUILD=false
 echo "==> Verificando minikube..."
 if [[ "$(minikube status --format '{{.Host}}' 2>/dev/null || true)" != "Running" ]]; then
   echo "    minikube no esta activo. Arrancando..."
-  minikube start --cpus=4 --memory=8192
+  minikube start --cpus=4 --memory=6144
 fi
 
 echo "==> Habilitando addons (ingress, metrics-server)..."
@@ -68,4 +68,4 @@ echo
 echo "Agrega esta linea a /etc/hosts:"
 echo "    $(minikube ip)  parqueadero.espe.edu.ec"
 echo
-echo "Luego abre: https://parqueadero.espe.edu.ec"
+echo "Luego abre: http://parqueadero.espe.edu.ec"
