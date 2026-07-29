@@ -76,6 +76,11 @@ minikube start --cpus=4 --memory=6144
 minikube addons enable ingress
 minikube addons enable metrics-server
 
+# Comprueba que el nodo no esté compartido con otros proyectos:
+#   kubectl get pods -A
+# Otros namespaces con carga compiten por la misma CPU y pueden impedir
+# que los microservicios lleguen a estar listos.
+
 # 2. Imágenes dentro del clúster (imagePullPolicy: Never no usa registro)
 eval $(minikube docker-env)
 docker build -t parkingapp/ms-usuarios:latest  App/ms-usuarios-roles-auth
@@ -115,6 +120,32 @@ En otros drivers o sistemas usa la dirección que devuelve `minikube ip`:
 ```
 
 Luego abre **http://parqueadero.espe.edu.ec**.
+
+> `minikube tunnel` necesita privilegios de administrador porque publica los
+> puertos 80 y 443 en `127.0.0.1`. Mientras esa ventana siga abierta el dominio
+> responde; si la cierras, deja de resolver.
+
+#### Alternativa sin administrador
+
+Si no puedes ejecutar `minikube tunnel`, el frontend ya reenvía `/api` al
+gateway dentro del clúster, así que basta con exponer ese único Service:
+
+```bash
+kubectl -n parqueadero port-forward svc/frontend 5500:80
+# http://localhost:5500
+```
+
+#### Ver el despliegue en el dashboard
+
+```bash
+minikube dashboard
+```
+
+El dashboard **abre siempre en el namespace `default`, que está vacío**: la
+aplicación vive en `parqueadero`. Si ves "No hay nada que mostrar aquí", cambia
+el desplegable de *Namespace* (arriba a la izquierda) a `parqueadero`. Lo mismo
+aplica en la línea de comandos: `kubectl get pods` sin `-n parqueadero` no
+muestra nada.
 
 ### Certificado TLS
 
@@ -164,6 +195,11 @@ kubectl -n parqueadero logs -l app=ms-audith --tail=100 -f
 
 ### Escalar
 
+Los Deployments declaran **1 réplica** y los HPA arrancan también en
+`minReplicas: 1`: un minikube de un solo nodo no sostiene dos réplicas de cada
+servicio junto a PostgreSQL, MySQL, RabbitMQ y los dos Redis. En un clúster con
+más nodos puedes subir ambos valores.
+
 ```bash
 kubectl -n parqueadero scale deployment/ms-vehiculos --replicas=5
 ```
@@ -171,6 +207,11 @@ kubectl -n parqueadero scale deployment/ms-vehiculos --replicas=5
 > No escales `ms-zonas` ni `ms-tickets` por encima de 1 réplica: mantienen los
 > emisores SSE en memoria y los clientes recibirían datos incompletos. Ver la
 > sección de tiempo real en [ARQUITECTURA.md](ARQUITECTURA.md).
+
+Los HPA incluyen `behavior.scaleUp.stabilizationWindowSeconds: 300`. **No lo
+quites**: una JVM recién arrancada consume el 100% de su CPU durante uno o dos
+minutos y, sin esa ventana, el HPA lee ese pico como carga real, crea réplicas
+nuevas que repiten el pico y el nodo se queda sin CPU (ver *Diagnóstico*).
 
 ### Cambiar la configuración de Kong
 
@@ -276,14 +317,81 @@ Kong reciba la variable:
 kubectl -n parqueadero exec deployment/kong -- env | grep JWT_SECRET
 ```
 
+**Una petición válida devuelve 403 `El tenant solicitado no coincide con el token`**
+No es un fallo: es el aislamiento multitenant. El tenant efectivo sale siempre
+del claim `tenant_id` del JWT, y Kong rechaza cualquier alias de la petición que
+lo contradiga — tanto cabeceras (`X-Tenant-ID`, `X-Tenant`, `X-Empresa`, ...)
+como parámetros de URL (`?tenant=`, `?tenant_id=`, `?empresa=`, ...). Los
+microservicios repiten la comprobación por su cuenta, de modo que la regla
+también se aplica si alguien llega al Service sin pasar por el gateway.
+
+Si te topas con este 403 de forma legítima, es que el cliente está enviando un
+identificador de empresa distinto al del token con el que inició sesión.
+
 **El dashboard no recibe eventos en vivo**
 1. Confirma que la conexión SSE esté abierta en la pestaña Network del navegador.
 2. Revisa que el Ingress tenga `proxy-buffering: "off"`.
 3. Verifica que `ms-zonas` tenga una sola réplica.
 
 **Kong responde 429**
-Es el rate limiting funcionando: 120 peticiones por minuto en general y 10 por
-minuto en `/api/auth`. Ajusta los valores en `kong-config/kong.yml` si necesitas más.
+Es el rate limiting funcionando: 120 peticiones por minuto **por tenant**
+(contadas por la cabecera `X-Tenant-ID`) y 10 por minuto por IP en `/api/auth`.
+Las peticiones sin esa cabecera caen automáticamente al contador por IP. Ajusta
+los valores en `kong-config/kong.yml` si necesitas más.
+
+**Kong responde 503 `failure to get a peer from the ring-balancer`**
+El upstream se quedó sin destinos sanos. Comprueba el estado real:
+
+```bash
+kubectl -n parqueadero port-forward deploy/kong 8001:8001
+curl -s http://127.0.0.1:8001/upstreams/usuarios-upstream/health
+```
+
+Si el destino sale `UNHEALTHY` pero el pod está `Running`, el health check
+activo lo sacó de rotación durante un pico de carga y se quedó con el estado
+cacheado. Reinicia el gateway: `kubectl -n parqueadero rollout restart deploy/kong`.
+
+**Todas las peticiones autenticadas devuelven 500**
+Revisa el log de Kong buscando `not allowed within sandbox`:
+
+```bash
+kubectl -n parqueadero logs deploy/kong | grep -i sandbox
+```
+
+Kong ejecuta el `post-function` en un sandbox de Lua que **prohíbe `require`**
+(por ejemplo `require("cjson.safe")`), y cualquier intento aborta la petición
+con 500. Por eso el plugin extrae el claim `tenant_id` con un patrón sobre el
+payload del JWT en vez de deserializar JSON. No reintroduzcas un `require` ahí.
+
+**Pods en `CrashLoopBackOff` con la aplicación aparentemente sana**
+Síntoma: en los logs la app termina de arrancar
+(`Root WebApplicationContext: initialization completed`), pero el contenedor
+muere con `Exit Code: 137` y en los eventos aparece
+`Liveness probe failed: context deadline exceeded`.
+
+Es el `timeoutSeconds` de las probes: **su valor por defecto es 1 segundo** y el
+actuator de una JVM cargada tarda más en contestar. Todos los manifiestos fijan
+`timeoutSeconds` explícitamente (5 s en readiness, 10 s en liveness); si añades
+un servicio nuevo, no omitas ese campo.
+
+**El nodo se queda sin CPU y ningún pod llega a estar listo**
+Suele ser el bucle de realimentación del HPA descrito en *Escalar*. Míralo con:
+
+```bash
+kubectl -n parqueadero get hpa
+kubectl -n parqueadero top pods
+```
+
+Si un Deployment saltó a su máximo de réplicas durante el arranque, corta el
+bucle y deja que estabilice:
+
+```bash
+kubectl -n parqueadero scale deploy/ms-usuarios --replicas=1
+```
+
+Evita además construir imágenes (`docker compose build`, `deploy.ps1`) mientras
+el clúster arranca: compiten por la misma CPU y pueden desestabilizar
+`cri-dockerd` (`connection reset by peer`, `failed to sync configmap cache`).
 
 **Los eventos no llegan a auditoría**
 ```bash
