@@ -8,6 +8,7 @@ import { TicketsModule } from './tickets/tickets.module';
 import { Ticket } from './tickets/entities/ticket.entity';
 import { EventsModule } from './events/events.module';
 import { EventPublisher } from './common/event.publisher.service';
+import { AuditOutbox } from './common/entities/audit-outbox.entity';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 
 @Module({
@@ -22,12 +23,15 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
         username: configService.get<string>('DB_USUARIO'),
         password: configService.get<string>('DB_CONTRASENA'),
         database: configService.get<string>('DB_NOMBRE'),
-        entities: [Ticket],
+        entities: [Ticket, AuditOutbox],
         synchronize: true, // solo desarrollo
         logging: true,
       }),
       inject: [ConfigService],
     }),
+    // La outbox vive en la misma base que los tickets: es lo que permite
+    // reintentar los eventos de auditoria tras una caida de RabbitMQ.
+    TypeOrmModule.forFeature([AuditOutbox]),
     TicketsModule,
     EventsModule,
   ],

@@ -13,7 +13,7 @@ metadata:
     app: kong
     tier: gateway
 spec:
-  replicas: 2 # el gateway es stateless: se escala horizontalmente sin coordinacion
+  replicas: 1 # el gateway es stateless; el HPA lo escala segun carga
   selector:
     matchLabels:
       app: kong

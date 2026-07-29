@@ -6,6 +6,7 @@ import { Vehiculo } from './vehiculos/entities/vehiculo.entity';
 import { Auto } from './vehiculos/entities/auto.entity';
 import { Motocicleta } from './vehiculos/entities/motocicleta.entity';
 import { Camioneta } from './vehiculos/entities/camioneta.entity';
+import { AuditOutbox } from './common/entities/audit-outbox.entity';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { Camioneta } from './vehiculos/entities/camioneta.entity';
         username: config.get<string>('DB_USUARIO') || 'postgres',
         password: config.get<string>('DB_CONTRASENA') || 'postgres',
         database: config.get<string>('DB_NOMBRE') || 'vehiculos_db',
-        entities: [Vehiculo, Auto, Motocicleta, Camioneta],
+        entities: [Vehiculo, Auto, Motocicleta, Camioneta, AuditOutbox],
         synchronize: true,
         logging: true,
       }),

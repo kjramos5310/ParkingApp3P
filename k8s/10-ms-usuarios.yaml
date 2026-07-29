@@ -10,7 +10,7 @@ metadata:
     app: ms-usuarios
     tier: backend
 spec:
-  replicas: 2
+  replicas: 1
   progressDeadlineSeconds: 1200
   selector:
     matchLabels:
@@ -62,22 +62,32 @@ spec:
           envFrom:
             - configMapRef:
                 name: parking-config
+          # timeoutSeconds es obligatorio ponerlo: el valor por defecto es 1s y
+          # el actuator de una JVM bajo carga tarda mas que eso en contestar.
+          # Con 1s los sondeos fallaban por "context deadline exceeded", el
+          # kubelet mataba el contenedor (SIGKILL, exit 137) y el servicio
+          # entraba en CrashLoopBackOff aunque la aplicacion estuviera sana.
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
               port: 8080
             failureThreshold: 90
             periodSeconds: 10 # tolera hasta 15 min de arranque de la JVM
+            timeoutSeconds: 5
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
               port: 8080
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
               port: 8080
             periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
               memory: "384Mi"

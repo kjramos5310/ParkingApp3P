@@ -6,6 +6,14 @@
 # ms-zonas y ms-tickets quedan deliberadamente fuera: mantienen los emisores
 # SSE en memoria del pod, de modo que escalarlos repartiria a los clientes
 # entre replicas que no comparten estado. Ver la nota en k8s/README.md.
+#
+# IMPORTANTE - ventana de estabilizacion al escalar hacia arriba:
+# una JVM recien arrancada consume el 100% de su CPU durante 1-2 minutos. Sin
+# ventana de estabilizacion el HPA interpreta ese pico como carga real, crea
+# mas replicas, y cada replica nueva repite el pico: el nodo se queda sin CPU
+# y ningun pod llega a estar listo (bucle de realimentacion). Los 300s de
+# stabilizationWindowSeconds hacen que el HPA ignore el arranque y solo
+# reaccione a carga sostenida.
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -17,7 +25,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: ms-usuarios
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource
@@ -32,6 +40,20 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
+  behavior:
+    scaleUp:
+      # Ignora los picos de arranque de la JVM; solo escala con carga sostenida.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -43,7 +65,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: ms-vehiculos
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource
@@ -52,6 +74,20 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
+  behavior:
+    scaleUp:
+      # Ignora los picos de arranque de la JVM; solo escala con carga sostenida.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -63,7 +99,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: ms-audith
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 8 # el volumen de eventos crece con el numero de tenants
   metrics:
     - type: Resource
@@ -72,6 +108,20 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
+  behavior:
+    scaleUp:
+      # Ignora los picos de arranque de la JVM; solo escala con carga sostenida.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -83,7 +133,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: kong
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 5
   metrics:
     - type: Resource
@@ -92,6 +142,20 @@ spec:
         target:
           type: Utilization
           averageUtilization: 75
+  behavior:
+    scaleUp:
+      # Ignora los picos de arranque de la JVM; solo escala con carga sostenida.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -103,7 +167,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: frontend
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 4
   metrics:
     - type: Resource
@@ -112,3 +176,17 @@ spec:
         target:
           type: Utilization
           averageUtilization: 75
+  behavior:
+    scaleUp:
+      # Ignora los picos de arranque de la JVM; solo escala con carga sostenida.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

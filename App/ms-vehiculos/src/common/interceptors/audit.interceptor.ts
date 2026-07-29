@@ -11,10 +11,27 @@ import { EventPublisher, AuditEvent } from '../event.publisher.service';
 import * as os from 'os';
 import * as https from 'https';
 
+/**
+ * Publica un evento de auditoria por cada operacion sobre vehiculos.
+ *
+ * Igual que en ms-tickets, un intento rechazado NO se registra con la accion
+ * que se pretendia ejecutar sino con REJECT: el segundo registro de una placa
+ * ya existente en el tenant deja un REJECT (409), nunca un CREATE, de modo que
+ * la auditoria no sugiere que el duplicado llego a persistirse.
+ */
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
   private readonly logger = new Logger(AuditInterceptor.name);
   private cachedPublicIp = '127.0.0.1';
+
+  /** Accion con la que se registran los intentos que el negocio rechazo. */
+  private static readonly ACCION_RECHAZO = 'REJECT';
+
+  /** Codigo HTTP con el que se respondio el rechazo (409, 403, ...). */
+  private static resolveStatus(err: unknown): number {
+    const status = (err as any)?.status ?? (err as any)?.getStatus?.();
+    return typeof status === 'number' ? status : 500;
+  }
 
   constructor(private readonly eventPublisher: EventPublisher) {
     this.fetchPublicIp();
@@ -110,6 +127,7 @@ export class AuditInterceptor implements NestInterceptor {
               datos: {
                 url,
                 method,
+                resultado: 'EXITOSO',
                 body: body ? JSON.parse(JSON.stringify(body)) : {},
                 response: responseBody ? JSON.parse(JSON.stringify(responseBody)) : {},
               },
@@ -136,11 +154,16 @@ export class AuditInterceptor implements NestInterceptor {
             const auditEvent: AuditEvent = {
               tenant_id: request.tenantId,
               servicio: 'ms-vehiculos',
-              accion,
+              // El intento fallido nunca se audita como la operacion original.
+              accion: AuditInterceptor.ACCION_RECHAZO,
               entidad,
               datos: {
                 url,
                 method,
+                resultado: 'RECHAZADO',
+                // Operacion que se pretendia ejecutar y que NO llego a ocurrir.
+                operacion_intentada: accion,
+                http_status: AuditInterceptor.resolveStatus(err),
                 body: body ? JSON.parse(JSON.stringify(body)) : {},
                 error: err instanceof Error ? err.message : String(err),
               },

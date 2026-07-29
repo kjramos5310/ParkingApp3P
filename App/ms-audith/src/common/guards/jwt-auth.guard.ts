@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ForbiddenException } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
+import { discrepanciaDeTenant } from '../tenant-aliases';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -17,6 +18,17 @@ export class JwtAuthGuard implements CanActivate {
     try {
       const payload = jwt.verify(cookieToken || auth.slice(7), this.secret) as any;
       if (payload.tenant_id !== tenantId) throw new ForbiddenException('El token pertenece a otra empresa');
+
+      // Ningun alias adicional puede contradecir al tenant del token:
+      // ?tenant=empresa-b o X-Tenant: empresa-b con un token de empresa-a
+      // se rechazan con 403 antes de tocar la base de datos.
+      const discrepancia = discrepanciaDeTenant(request, tenantId);
+      if (discrepancia) {
+        throw new ForbiddenException(
+          `El tenant solicitado no coincide con el del token (${discrepancia})`,
+        );
+      }
+
       request.user = payload;
       request.tenantId = tenantId;
       return true;

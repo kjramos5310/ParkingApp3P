@@ -41,6 +41,17 @@ public class TenantContextFilter extends OncePerRequestFilter {
         }
         try {
             TenantContext.set(request.getHeader(TenantContext.HEADER));
+
+            // Ningun alias adicional puede contradecir al tenant efectivo:
+            // ?tenant=empresa-b o X-Tenant: empresa-b con un token de
+            // empresa-a se rechazan con 403 y no se consulta la base.
+            String discrepancia = TenantAliases.discrepancia(request, TenantContext.get());
+            if (discrepancia != null) {
+                response.sendError(HttpServletResponse.SC_FORBIDDEN,
+                        "El tenant solicitado no coincide con el del token (" + discrepancia + ")");
+                return;
+            }
+
             chain.doFilter(request, response);
         } catch (IllegalArgumentException ex) {
             response.sendError(HttpServletResponse.SC_BAD_REQUEST, ex.getMessage());

@@ -68,6 +68,12 @@ data:
           # salud distinta, y el puerto abierto es senal suficiente.
           active:
             type: tcp
+            # El valor por defecto de timeout es 1s. Con el nodo cargado (varias
+            # JVM arrancando a la vez) el connect tarda mas y el sondeo lo cuenta
+            # como timeout: a los 3 seguidos el destino queda fuera de rotacion y
+            # el gateway responde 503 "failure to get a peer from the ring-balancer"
+            # aunque el microservicio este perfectamente sano.
+            timeout: 3
             healthy:
               interval: 5
               successes: 1
@@ -332,12 +338,43 @@ data:
           max_age: 3600
           credentials: true
 
-      # Aislamiento multitenant en el borde. Se ejecuta despues del plugin JWT:
-      # deriva X-Tenant-ID del claim firmado y rechaza cualquier discrepancia.
+      # Aislamiento multitenant en el borde. Se ejecuta despues del plugin JWT
+      # (post-function tiene prioridad negativa): deriva X-Tenant-ID del claim
+      # firmado y rechaza cualquier discrepancia con 403.
+      #
+      # El tenant efectivo SIEMPRE sale del claim tenant_id del token. Cualquier
+      # alias que el cliente intente colar -- cabecera propia o parametro de la
+      # URL -- se compara contra ese claim y, si discrepa, la peticion muere aqui
+      # sin llegar a los microservicios internos. De ahi la lista de alias: cubre
+      # las variantes con las que se suele intentar la invasion de tenant
+      # (?tenant=, ?tenantId=, X-Tenant, X-Empresa, ...), no solo la canonica.
       - name: post-function
         config:
           access:
             - |
+              -- La busqueda de cabeceras en Kong ya es insensible a mayusculas;
+              -- los parametros de query no lo son, por eso se listan variantes.
+              local ALIAS_CABECERAS = {
+                "x-tenant-id", "x-tenant", "x-tenantid", "x-tenant-name",
+                "tenant", "tenant-id", "tenantid",
+                "x-empresa", "empresa", "x-empresa-id",
+              }
+              local ALIAS_PARAMETROS = {
+                "tenant_id", "tenant", "tenantId", "tenantid", "tenant-id",
+                "empresa", "empresa_id", "empresaId", "idEmpresa",
+              }
+
+              -- Un alias repetido llega como tabla; un flag sin valor, como boolean.
+              local function valor_unico(valor)
+                if type(valor) == "table" then
+                  return valor[1]
+                end
+                if type(valor) == "string" then
+                  return valor
+                end
+                return nil
+              end
+
               local authorization = kong.request.get_header("authorization")
               local token = nil
 
@@ -345,7 +382,7 @@ data:
                 token = authorization:match("^[Bb]earer%s+(.+)$")
               end
               if not token then
-                token = kong.request.get_query_arg("jwt")
+                token = valor_unico(kong.request.get_query_arg("jwt"))
               end
 
               -- Las rutas publicas (login y aprovisionamiento) no llevan JWT.
@@ -364,31 +401,73 @@ data:
                 encoded_payload = encoded_payload .. string.rep("=", 4 - remainder)
               end
 
+              -- OJO: el sandbox de Lua de Kong prohibe require("cjson.safe") y
+              -- cualquier intento aborta la peticion con 500. El claim se extrae
+              -- con un patron sobre el JSON ya decodificado, que es suficiente:
+              -- tenant_id es siempre una cadena simple y la firma del token ya la
+              -- verifico el plugin jwt antes de llegar hasta aqui.
               local decoded = ngx.decode_base64(encoded_payload)
-              local claims = decoded and require("cjson.safe").decode(decoded) or nil
-              local token_tenant = claims and claims.tenant_id or nil
+              local token_tenant = decoded and decoded:match('"tenant_id"%s*:%s*"([^"]*)"') or nil
               if not token_tenant or token_tenant == "" then
                 return kong.response.exit(403, { message = "El token no contiene tenant_id" })
               end
 
               token_tenant = string.lower(token_tenant)
-              local requested_tenant = kong.request.get_header("x-tenant-id")
-                  or kong.request.get_query_arg("tenant_id")
 
-              if requested_tenant and string.lower(requested_tenant) ~= token_tenant then
-                return kong.response.exit(403, { message = "El tenant solicitado no coincide con el token" })
+              -- Devuelve el primer alias que no coincide con el claim del token.
+              local function alias_discrepante()
+                for _, nombre in ipairs(ALIAS_CABECERAS) do
+                  local valor = valor_unico(kong.request.get_header(nombre))
+                  if valor and valor ~= "" and string.lower(valor) ~= token_tenant then
+                    return "cabecera " .. nombre, valor
+                  end
+                end
+                for _, nombre in ipairs(ALIAS_PARAMETROS) do
+                  local valor = valor_unico(kong.request.get_query_arg(nombre))
+                  if valor and valor ~= "" and string.lower(valor) ~= token_tenant then
+                    return "parametro " .. nombre, valor
+                  end
+                end
+                return nil, nil
+              end
+
+              local origen, solicitado = alias_discrepante()
+              if origen then
+                kong.log.warn("Invasion de tenant rechazada: ", origen, "=", solicitado,
+                              " no coincide con el claim tenant_id=", token_tenant)
+                return kong.response.exit(403, {
+                  message = "El tenant solicitado no coincide con el token",
+                  origen = origen,
+                  tenant_solicitado = string.lower(solicitado),
+                })
+              end
+
+              -- Los alias no canonicos se eliminan del trafico hacia el upstream:
+              -- ningun microservicio debe poder leer un tenant distinto del que
+              -- Kong acaba de validar contra la firma.
+              for _, nombre in ipairs(ALIAS_CABECERAS) do
+                if nombre ~= "x-tenant-id" then
+                  kong.service.request.clear_header(nombre)
+                end
               end
 
               kong.service.request.set_header("X-Tenant-ID", token_tenant)
 
-      # Rate limiting general de la plataforma. En modo DB-less el contador es
-      # local a cada nodo de Kong (policy: local).
+      # Rate limiting general de la plataforma, contabilizado POR TENANT: la cuota
+      # de una empresa no puede agotarse por el trafico de otra. Kong solo admite
+      # una instancia global de cada plugin, de modo que este es el contador por
+      # tenant y el de /api/auth (mas estricto y por IP) cubre el trafico anonimo.
+      #
+      # Si la cabecera no viene -- peticiones sin autenticar -- el plugin cae
+      # automaticamente al identificador por IP, asi que nunca queda sin limite.
+      # En modo DB-less el contador es local a cada nodo de Kong (policy: local).
       - name: rate-limiting
         config:
           minute: 120
           hour: 3000
           policy: local
-          limit_by: ip
+          limit_by: header
+          header_name: X-Tenant-ID
           fault_tolerant: true
           hide_client_headers: false
 

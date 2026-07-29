@@ -17,11 +17,14 @@ import { Auto } from './entities/auto.entity';
 import { Motocicleta } from './entities/motocicleta.entity';
 import { Camioneta } from './entities/camioneta.entity';
 import { EventPublisher } from '../common/event.publisher.service';
+import { AuditOutbox } from '../common/entities/audit-outbox.entity';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditInterceptor } from '../common/interceptors/audit.interceptor';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Vehiculo, Auto, Motocicleta, Camioneta])],
+  // La outbox vive en la misma base que los vehiculos: es lo que permite
+  // reintentar los eventos de auditoria tras una caida de RabbitMQ.
+  imports: [TypeOrmModule.forFeature([Vehiculo, Auto, Motocicleta, Camioneta, AuditOutbox])],
   controllers: [VehiculosController],
   providers: [
     VehiculosService,

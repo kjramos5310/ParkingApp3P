@@ -11,7 +11,7 @@ metadata:
     app: frontend
     tier: frontend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: frontend
@@ -33,18 +33,25 @@ spec:
             # deja la imagen utilizable tambien sin Ingress (port-forward).
             - name: KONG_UPSTREAM
               value: "kong-proxy:8000"
+          # timeoutSeconds es obligatorio ponerlo: el valor por defecto es 1s y
+          # bajo carga el sondeo expira antes de que nginx conteste, con lo que
+          # el kubelet reinicia un contenedor que en realidad esta sano.
           readinessProbe:
             httpGet:
               path: /
               port: 80
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /
               port: 80
             initialDelaySeconds: 15
             periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
               memory: "32Mi"

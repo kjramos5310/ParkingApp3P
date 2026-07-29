@@ -17,12 +17,19 @@ import { auditoria as apiAuditoria } from '../lib/api';
 import { useTenant } from '../lib/auth';
 import type { EventoAuditoria } from '../lib/types';
 
-/** Color por accion: distingue de un vistazo lo que crea, cambia o borra. */
+/**
+ * Color por accion: distingue de un vistazo lo que crea, cambia o borra.
+ *
+ * REJECT son los intentos que el negocio rechazo (ticket duplicado, doble
+ * cierre, placa repetida, espacio en mantenimiento...). Quedan registrados
+ * para la trazabilidad, pero nunca se confunden con la operacion real.
+ */
 const COLOR_ACCION: Record<string, string> = {
   CREATE: 'var(--color-led-free)',
   UPDATE: 'var(--color-led-held)',
   DELETE: 'var(--color-led-taken)',
   READ: 'var(--color-ink-faint)',
+  REJECT: 'var(--color-led-taken)',
 };
 
 function colorDeAccion(accion: string): string {

@@ -16,7 +16,21 @@ import * as https from 'https';
  *
  * El ciclo de vida del ticket (entrada, cobro y salida del vehiculo) es la
  * traza mas sensible del sistema, de modo que se auditan tanto las respuestas
- * exitosas como los errores.
+ * exitosas como los intentos rechazados.
+ *
+ * IMPORTANTE: un intento rechazado NO se registra con la accion de la
+ * operacion que se pretendia hacer, sino con la accion REJECT. Asi la
+ * auditoria distingue lo que ocurrio de lo que solo se intento:
+ *
+ *   - un segundo ticket para un vehiculo que ya tiene uno activo no deja un
+ *     CREATE en la auditoria, deja un REJECT (409);
+ *   - el segundo cierre de un ticket ya cerrado no deja un UPDATE, deja un
+ *     REJECT, de modo que solo existe un unico evento de cierre real;
+ *   - en una condicion de carrera por el mismo espacio queda exactamente un
+ *     CREATE (la asignacion que gano) y un REJECT (la que perdio).
+ *
+ * El detalle del rechazo (operacion pretendida y codigo HTTP) viaja dentro de
+ * "datos" para no perder trazabilidad.
  */
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
@@ -27,6 +41,15 @@ export class AuditInterceptor implements NestInterceptor {
   private static readonly ENTIDAD = 'tickets';
   private static readonly SERVICIO = 'ms-tickets';
   private static readonly IPV4 = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+
+  /** Accion con la que se registran los intentos que el negocio rechazo. */
+  private static readonly ACCION_RECHAZO = 'REJECT';
+
+  /** Codigo HTTP con el que se respondio el rechazo (409, 422, 403, ...). */
+  private static resolveStatus(err: unknown): number {
+    const status = (err as any)?.status ?? (err as any)?.getStatus?.();
+    return typeof status === 'number' ? status : 500;
+  }
 
   constructor(private readonly eventPublisher: EventPublisher) {
     this.fetchPublicIp();
@@ -101,12 +124,16 @@ export class AuditInterceptor implements NestInterceptor {
     const usuario = this.resolveUsuario(user);
     const idUsuario = user?.id ? Number(user.id) : 1;
 
-    const publicar = async (datos: Record<string, any>, idVehiculo?: string) => {
+    const publicar = async (
+      accionEvento: string,
+      datos: Record<string, any>,
+      idVehiculo?: string,
+    ) => {
       try {
         const evento: AuditEvent = {
           tenant_id: request.tenantId,
           servicio: AuditInterceptor.SERVICIO,
-          accion,
+          accion: accionEvento,
           entidad: AuditInterceptor.ENTIDAD,
           datos,
           fecha_hora: new Date(),
@@ -129,9 +156,11 @@ export class AuditInterceptor implements NestInterceptor {
           // La placa permite rastrear que vehiculo genero el movimiento.
           const placa = responseBody?.placa ?? body?.placa;
           await publicar(
+            accion,
             {
               url,
               method,
+              resultado: 'EXITOSO',
               body: body ? JSON.parse(JSON.stringify(body)) : {},
               response: responseBody ? JSON.parse(JSON.stringify(responseBody)) : {},
             },
@@ -139,13 +168,22 @@ export class AuditInterceptor implements NestInterceptor {
           );
         },
         error: async (err) => {
-          await publicar({
-            url,
-            method,
-            params: params ?? {},
-            body: body ? JSON.parse(JSON.stringify(body)) : {},
-            error: err instanceof Error ? err.message : String(err),
-          });
+          const placa = body?.placa;
+          await publicar(
+            AuditInterceptor.ACCION_RECHAZO,
+            {
+              url,
+              method,
+              resultado: 'RECHAZADO',
+              // Operacion que se pretendia ejecutar y que NO llego a ocurrir.
+              operacion_intentada: accion,
+              http_status: AuditInterceptor.resolveStatus(err),
+              params: params ?? {},
+              body: body ? JSON.parse(JSON.stringify(body)) : {},
+              error: err instanceof Error ? err.message : String(err),
+            },
+            typeof placa === 'string' ? placa : undefined,
+          );
         },
       }),
     );

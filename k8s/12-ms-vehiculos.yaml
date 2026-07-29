@@ -10,7 +10,7 @@ metadata:
     app: ms-vehiculos
     tier: backend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: ms-vehiculos
@@ -63,19 +63,28 @@ spec:
           envFrom:
             - configMapRef:
                 name: parking-config
+          # timeoutSeconds es obligatorio ponerlo: el valor por defecto es 1s y
+          # bajo carga el sondeo expira antes de que el proceso conteste. El
+          # kubelet mataba entonces el contenedor (SIGKILL, exit 137) y el
+          # servicio entraba en CrashLoopBackOff aunque estuviera sano.
           startupProbe:
             tcpSocket:
               port: 3000
-            failureThreshold: 20
+            failureThreshold: 60
             periodSeconds: 5
+            timeoutSeconds: 5
           readinessProbe:
             tcpSocket:
               port: 3000
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           livenessProbe:
             tcpSocket:
               port: 3000
             periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
               memory: "128Mi"
